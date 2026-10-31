@@ -3,7 +3,7 @@
 import { BookOpen, Pencil, Plus } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { Button, Card, Spinner, buttonClass } from "@/components/ui";
+import { Card, Spinner, buttonClass } from "@/components/ui";
 import { listChildren, listLessons, type LessonWithCounts } from "@/lib/data";
 import { LEVELS } from "@/lib/settings";
 import { supabase } from "@/lib/supabase";

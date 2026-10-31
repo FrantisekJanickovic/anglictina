@@ -138,6 +138,7 @@ export const ACTIVITIES: { key: ActivityKey; label: string; method?: MethodKey; 
   { key: "speed", label: "Blesková runda", method: "speed", scored: true },
   { key: "shadowing", label: "Opakuj po mne", method: "shadowing", scored: false },
   { key: "grammar", label: "Gramatika", scored: true },
+  { key: "writing", label: "Písanie viet", scored: true },
   { key: "reading", label: "Čítanie", scored: false },
   { key: "listening", label: "Počúvanie", scored: false },
 ];

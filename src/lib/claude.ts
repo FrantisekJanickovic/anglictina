@@ -66,3 +66,7 @@ export const gradeNote = (grade?: number | null) =>
 
 export const STYLE = `Slovak must be natural, correct, with full diacritics, as a Slovak teacher would write it for children.
 English example sentences must be short, concrete and use only simple vocabulary a child at this level knows. Use British English spelling.`;
+
+/** Coerce model output into plain strings so the UI never receives surprises. */
+export const s = (v: unknown, max = 4000) => (typeof v === "string" ? v.trim().slice(0, max) : "");
+export const arr = <T>(v: unknown): T[] => (Array.isArray(v) ? (v as T[]) : []);

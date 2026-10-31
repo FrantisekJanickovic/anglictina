@@ -1,7 +1,7 @@
 "use client";
 
 import { supabase } from "./supabase";
-import type { Child, GrammarItem, ItemProgress, Lesson, LessonText, VocabItem } from "./types";
+import type { Child, GrammarItem, ItemProgress, Lesson, LessonText, TextUse, VocabItem } from "./types";
 
 export async function listChildren(): Promise<Child[]> {
   const { data, error } = await supabase().from("children").select("*").order("created_at");
@@ -15,25 +15,32 @@ export async function getChild(id: string): Promise<Child | null> {
   return data as Child | null;
 }
 
-export type LessonWithCounts = Lesson & { vocab: number; grammar: number; texts: number };
+export type LessonWithCounts = Lesson & { vocab: number; grammar: number; texts: number; reading: number; listening: number; writing: number };
 
 export async function listLessons(): Promise<LessonWithCounts[]> {
   const { data, error } = await supabase()
     .from("lessons")
-    .select("*, vocab_items(count), grammar_items(count), lesson_texts(count)")
+    .select("*, vocab_items(count), grammar_items(count), lesson_texts(uses, sentences)")
     .order("created_at", { ascending: false });
   if (error) throw error;
   type Row = Lesson & {
     vocab_items: { count: number }[];
     grammar_items: { count: number }[];
-    lesson_texts: { count: number }[];
+    lesson_texts: { uses: TextUse[] | null; sentences: unknown[] | null }[];
   };
-  return ((data ?? []) as Row[]).map(({ vocab_items, grammar_items, lesson_texts, ...l }) => ({
-    ...l,
-    vocab: vocab_items?.[0]?.count ?? 0,
-    grammar: grammar_items?.[0]?.count ?? 0,
-    texts: lesson_texts?.[0]?.count ?? 0,
-  }));
+  return ((data ?? []) as Row[]).map(({ vocab_items, grammar_items, lesson_texts, ...l }) => {
+    const texts = lesson_texts ?? [];
+    const uses = (u: TextUse) => texts.filter((t) => (t.uses ?? ["reading", "listening"]).includes(u));
+    return {
+      ...l,
+      vocab: vocab_items?.[0]?.count ?? 0,
+      grammar: grammar_items?.[0]?.count ?? 0,
+      texts: texts.length,
+      reading: uses("reading").length,
+      listening: uses("listening").length,
+      writing: uses("writing").reduce((n, t) => n + (t.sentences?.length ?? 0), 0),
+    };
+  });
 }
 
 export type LessonContent = { vocab: VocabItem[]; grammar: GrammarItem[]; texts: LessonText[] };

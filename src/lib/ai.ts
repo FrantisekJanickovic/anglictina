@@ -1,12 +1,18 @@
 "use client";
 
 import { authHeader } from "./supabase";
-import type { Sentence } from "./types";
+import type { Sentence, SourceType } from "./types";
 
 export type DraftVocab = { en: string; sk: string; example_en?: string; example_sk?: string; emoji?: string };
 export type DraftGrammar = { prompt: string; answer: string; options?: string[]; translation_sk?: string; explanation_sk?: string };
 export type DraftText = { title?: string; sentences: Sentence[] };
-export type ImportResult = { title?: string; unit?: string; vocab: DraftVocab[]; grammar: DraftGrammar[]; texts: DraftText[] };
+
+/** One exercise found on a textbook page. */
+export type PageExercise = { label: string; instruction: string; text: string; note: string; suggested: SourceType[] };
+export type PageResult = { title: string; unit: string; exercises: PageExercise[] };
+
+/** Practice items generated from one exercise for the chosen types. */
+export type BuildResult = { vocab: DraftVocab[]; grammar: DraftGrammar[]; text: DraftText | null; writing: Sentence[] };
 
 async function post<T>(path: string, body: unknown): Promise<T> {
   const res = await fetch(path, {
@@ -20,7 +26,7 @@ async function post<T>(path: string, body: unknown): Promise<T> {
 }
 
 /** Downscale a photo so it uploads fast and stays under request limits. */
-async function toJpegBase64(file: File, max = 1800): Promise<{ data: string; mediaType: string }> {
+async function toJpegBase64(file: File, max = 2000): Promise<{ data: string; mediaType: string }> {
   const bitmap = await createImageBitmap(file);
   const scale = Math.min(1, max / Math.max(bitmap.width, bitmap.height));
   const canvas = document.createElement("canvas");
@@ -31,9 +37,18 @@ async function toJpegBase64(file: File, max = 1800): Promise<{ data: string; med
   return { data: url.split(",")[1], mediaType: "image/jpeg" };
 }
 
-export async function importFromPhoto(file: File, ctx: { grade?: number | null; hint?: string }): Promise<ImportResult> {
+/** Read one textbook page and split it into exercises with suggested practice types. */
+export async function segmentPhoto(file: File, grade?: number | null): Promise<PageResult> {
   const img = await toJpegBase64(file);
-  return post<ImportResult>("/api/ai/import", { image: img.data, mediaType: img.mediaType, grade: ctx.grade, hint: ctx.hint });
+  return post<PageResult>("/api/ai/segment", { image: img.data, mediaType: img.mediaType, grade });
+}
+
+/** Turn one exercise into practice items for the given types. */
+export async function buildFromSource(
+  src: { label: string | null; instruction: string | null; content: string; types: SourceType[] },
+  grade?: number | null,
+): Promise<BuildResult> {
+  return post<BuildResult>("/api/ai/build", { ...src, grade });
 }
 
 export async function enrichVocab(items: DraftVocab[], grade?: number | null) {

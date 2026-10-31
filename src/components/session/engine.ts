@@ -5,13 +5,13 @@ import { phrases } from "@/lib/phrases";
 import { nextProgress, type Outcome } from "@/lib/srs";
 import { speak, type VoiceOpts } from "@/lib/speech";
 import { supabase } from "@/lib/supabase";
-import type { ActivityKey, Child, ChildSettings, ItemProgress, Lang, VocabItem } from "@/lib/types";
+import type { ActivityKey, Child, ChildSettings, ItemProgress, ItemType, Lang, VocabItem } from "@/lib/types";
 
 export type DrillItem = VocabItem & { dir: "en_sk" | "sk_en"; key: string };
 
 export type AttemptInput = {
   activity: ActivityKey;
-  itemType: "vocab" | "grammar";
+  itemType: ItemType;
   itemId: string;
   correct: boolean;
   hinted?: boolean;

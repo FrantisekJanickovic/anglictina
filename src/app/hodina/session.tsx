@@ -13,6 +13,7 @@ import Reading from "@/components/session/activities/Reading";
 import Scramble from "@/components/session/activities/Scramble";
 import Shadowing from "@/components/session/activities/Shadowing";
 import Speed from "@/components/session/activities/Speed";
+import Writing, { sentenceWords, type WritingItem } from "@/components/session/activities/Writing";
 import { toDrill, useSessionEngine, type DrillItem } from "@/components/session/engine";
 import { Progress } from "@/components/session/parts";
 import Summary, { type SummaryData } from "@/components/session/Summary";
@@ -36,6 +37,7 @@ import type {
   Lang,
   LessonText,
   Sentence,
+  TextUse,
   VocabItem,
 } from "@/lib/types";
 
@@ -48,6 +50,7 @@ export type Plan = {
   texts: LessonText[];
   listening: Sentence[];
   shadow: Sentence[];
+  writing: WritingItem[];
   activities: ActivityKey[];
   lessonTitles: string[];
 };
@@ -112,7 +115,7 @@ export default function SessionPage() {
         ? (["flashcards", "classic"] as ActivityKey[]).filter(enabled)
         : ACTIVITIES.filter((a) => a.method && s.methods[a.method] && a.key !== "shadowing")
             .map((a) => a.key)
-            .concat("grammar");
+            .concat("grammar", "writing");
       setSetup({
         lessonIds: valid.length ? valid : l[0] ? [l[0].id] : [],
         activities: !reviewMode && saved.activities?.length ? saved.activities.filter(enabled) : defaults.length ? defaults : ["classic"],
@@ -124,11 +127,16 @@ export default function SessionPage() {
   }, [childId, reviewMode, router]);
 
   const selectedLessons = lessons.filter((l) => setup?.lessonIds.includes(l.id));
-  const counts = selectedLessons.reduce((a, l) => ({ vocab: a.vocab + l.vocab, grammar: a.grammar + l.grammar, texts: a.texts + l.texts }), {
-    vocab: 0,
-    grammar: 0,
-    texts: 0,
-  });
+  const counts = selectedLessons.reduce(
+    (a, l) => ({
+      vocab: a.vocab + l.vocab,
+      grammar: a.grammar + l.grammar,
+      reading: a.reading + l.reading,
+      listening: a.listening + l.listening,
+      writing: a.writing + l.writing,
+    }),
+    { vocab: 0, grammar: 0, reading: 0, listening: 0, writing: 0 },
+  );
 
   const available = useMemo(() => {
     if (!child || !setup) return [] as ActivityKey[];
@@ -137,11 +145,13 @@ export default function SessionPage() {
       if (a.method && !s.methods[a.method]) return false;
       if (reviewMode) return ["flashcards", "classic", "match", "scramble", "dictation", "speed"].includes(a.key);
       if (a.key === "grammar") return counts.grammar > 0;
-      if (a.key === "reading" || a.key === "listening") return counts.texts > 0;
+      if (a.key === "writing") return counts.writing > 0;
+      if (a.key === "reading") return counts.reading > 0;
+      if (a.key === "listening") return counts.listening > 0;
       if (a.key === "warmup") return true;
       return counts.vocab > 0;
     }).map((a) => a.key);
-  }, [child, setup, baseSettings, counts.grammar, counts.texts, counts.vocab, reviewMode]);
+  }, [child, setup, baseSettings, counts.grammar, counts.reading, counts.listening, counts.writing, counts.vocab, reviewMode]);
 
   // activities the user picked, in their chosen order, then the remaining available ones
   const orderedActivities = useMemo(() => {
@@ -209,7 +219,15 @@ export default function SessionPage() {
 
       const drill = toDrill(chosen, s.direction);
       const grammar = [...content.grammar].sort((a, b) => priority(progress.get(a.id)) - priority(progress.get(b.id))).slice(0, 12);
-      const listening = content.texts.flatMap((t) => t.sentences);
+      const usedFor = (u: TextUse) => content.texts.filter((t) => (t.uses?.length ? t.uses : ["reading", "listening"]).includes(u));
+      const readingTexts = usedFor("reading");
+      const listening = usedFor("listening").flatMap((t) => t.sentences);
+      const writing: WritingItem[] = usedFor("writing")
+        .flatMap((t) => t.sentences.map((x, i) => ({ id: x.id ?? `${t.id}-${i}`, en: x.en, sk: x.sk })))
+        .filter((x) => sentenceWords(x.en).length >= 2)
+        .sort((a, b) => priority(progress.get(a.id)) - priority(progress.get(b.id)))
+        .slice(0, 10)
+        .map((x, i) => ({ ...x, key: `${x.id}-${i}` }));
       const shadow: Sentence[] = chosen
         .filter((v) => v.example_en)
         .slice(0, 6)
@@ -219,7 +237,9 @@ export default function SessionPage() {
       const acts = chosenActivities.filter((a) => {
         if (a === "warmup") return warmupItems.length > 0;
         if (a === "grammar") return grammar.length > 0;
-        if (a === "reading" || a === "listening") return content.texts.length > 0;
+        if (a === "reading") return readingTexts.length > 0;
+        if (a === "listening") return listening.length > 0;
+        if (a === "writing") return writing.length > 0;
         if (a === "shadowing") return shadow.length > 0;
         if (a === "match") return drill.length >= 2;
         return drill.length > 0;
@@ -235,9 +255,10 @@ export default function SessionPage() {
         warmup: toDrill(warmupItems, s.direction),
         pool: toDrill(content.vocab, s.direction),
         grammar,
-        texts: content.texts,
+        texts: readingTexts,
         listening,
         shadow,
+        writing,
         activities: acts,
         lessonTitles: reviewMode ? ["Opakovanie chýb"] : selectedLessons.map((l) => l.title),
       };
@@ -258,11 +279,13 @@ export default function SessionPage() {
         add(v.example_en, "en");
       }
       for (const g of grammar) add(g.prompt.replace(/_{2,}/, g.answer.split("|")[0].trim()), "en");
-      if (acts.includes("listening") || acts.includes("reading"))
+      if (acts.includes("listening"))
         for (const t of listening) {
           add(t.en, "en");
           add(t.sk, "sk");
         }
+      if (acts.includes("reading")) for (const t of readingTexts.flatMap((x) => x.sentences)) add(t.en, "en");
+      if (acts.includes("writing")) for (const t of writing) add(t.en, "en");
       for (const t of shadow) add(t.en, "en");
       const unique = [...new Map(say.map((x) => [`${x.lang}|${x.text}`, x])).values()];
       setPrep({ done: 0, total: unique.length });
@@ -364,6 +387,7 @@ export default function SessionPage() {
                       <span className="block font-black truncate">{l.title}</span>
                       <span className="block text-sm text-slate">
                         {l.vocab} slovíčok{l.grammar ? ` · ${l.grammar} gramatika` : ""}
+                        {l.writing ? ` · ${l.writing} viet` : ""}
                         {l.texts ? ` · ${l.texts} text` : ""}
                       </span>
                     </span>
@@ -623,6 +647,7 @@ export function Runner({
         {current === "speed" && <Speed items={plan.drill} pool={plan.pool} ctx={ctx} onDone={next} />}
         {current === "shadowing" && <Shadowing sentences={plan.shadow} ctx={ctx} onDone={next} />}
         {current === "grammar" && <Grammar items={plan.grammar} ctx={ctx} onDone={next} />}
+        {current === "writing" && <Writing items={plan.writing} ctx={ctx} onDone={next} />}
         {current === "reading" && <Reading texts={plan.texts} ctx={ctx} onDone={next} />}
         {current === "listening" && <Listening sentences={plan.listening} ctx={ctx} onDone={next} />}
       </div>
