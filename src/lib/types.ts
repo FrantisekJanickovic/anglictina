@@ -5,8 +5,7 @@ export type AnswerMode = "written" | "oral";
 export type GrammarMode = "choice" | "typing";
 export type Level = "zaciatocnik" | "mierne_pokrocily" | "pokrocily";
 
-export type MethodKey =
-  "classic" | "flashcards" | "match" | "scramble" | "dictation" | "speed" | "shadowing" | "interleaving" | "dualCoding" | "gamification" | "warmup";
+export type MethodKey = "classic" | "flashcards" | "match" | "scramble" | "dictation" | "speed" | "shadowing" | "dualCoding" | "gamification";
 
 export type ChildSettings = {
   voice: "female" | "male";
@@ -50,6 +49,7 @@ export type Lesson = {
   unit: string | null;
   grade: number | null;
   notes: string | null;
+  position: number;
   created_at: string;
   updated_at: string;
 };
@@ -114,6 +114,35 @@ export type LessonSource = {
 
 export type ItemType = "vocab" | "grammar" | "sentence";
 
+/** A question the child struggled with, kept per lesson until it is mastered. */
+export type ProblemItem = {
+  id: string;
+  child_id: string;
+  lesson_id: string;
+  item_type: ItemType | "pronunciation";
+  item_id: string;
+  label: string;
+  detail: string | null;
+  last_answer: string | null;
+  wrong_count: number;
+  sessions_count: number;
+  correct_streak: number;
+  mastered: boolean;
+  mastered_at: string | null;
+  first_seen_at: string;
+  last_wrong_at: string | null;
+  last_session_id: string | null;
+};
+
+/** Training settings of the whole family account. */
+export type GlobalConfig = {
+  reviewPrevious: boolean;
+  previousLessons: number;
+  previousMax: number;
+  masteryStreak: number;
+  maxSavedPerSession: number;
+};
+
 export type ItemProgress = {
   child_id: string;
   item_type: ItemType;
@@ -142,8 +171,11 @@ export type SessionSummary = {
   durationSec?: number;
   activities?: { key: ActivityKey; label: string; total: number; correct: number }[];
   problemWords?: { id: string; en: string; sk: string }[];
+  problems?: { label: string }[];
   lessonTitles?: string[];
+  reviewCount?: number;
+  masteredNow?: number;
 };
 
 export type ActivityKey =
-  "warmup" | "flashcards" | "classic" | "match" | "scramble" | "dictation" | "speed" | "shadowing" | "grammar" | "writing" | "reading" | "listening";
+  "flashcards" | "classic" | "match" | "scramble" | "dictation" | "speed" | "shadowing" | "grammar" | "writing" | "reading" | "listening";

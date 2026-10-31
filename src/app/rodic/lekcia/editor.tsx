@@ -6,11 +6,13 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { Button, Card, cx, ErrorNote, Field, Input, Segmented, Spinner, Textarea } from "@/components/ui";
 import { aiStatus, buildFromSource, enrichVocab, generateGrammar, translateSentences, type BuildResult, type PageResult } from "@/lib/ai";
-import { loadContent } from "@/lib/data";
+import { listChildren, loadContent } from "@/lib/data";
+import { GRADES, gradeLabel } from "@/lib/settings";
 import { effective, isPending } from "@/lib/sources";
 import { supabase } from "@/lib/supabase";
 import { normalize } from "@/lib/text";
 import type { Lesson, LessonSource, Sentence, SourceType, TextUse } from "@/lib/types";
+import { ProblemsPanel } from "./problems";
 import { pl, SourceCard, UploadPanel, usePageImport } from "./sources";
 
 type VRow = { id: string; en: string; sk: string; example_en: string; example_sk: string; emoji: string; source_id: string | null };
@@ -20,7 +22,16 @@ type TRow = { id: string; title: string; sentences: SRow[]; uses: TextUse[]; sou
 type Meta = { title: string; textbook: string; unit: string; grade: string; notes: string };
 type Deleted = { vocab: string[]; grammar: string[]; texts: string[] };
 type Snapshot = { meta: Meta; vocab: VRow[]; grammar: GRow[]; texts: TRow[]; deleted: Deleted };
-type Tab = "sources" | "vocab" | "grammar" | "texts";
+type Tab = "sources" | "vocab" | "grammar" | "texts" | "problems";
+
+const LAST_GRADE = "anglictina.lastGrade";
+const readLastGrade = () => {
+  try {
+    return localStorage.getItem(LAST_GRADE) ?? "";
+  } catch {
+    return "";
+  }
+};
 
 const uid = () => crypto.randomUUID();
 const emptyV = (): VRow => ({ id: uid(), en: "", sk: "", example_en: "", example_sk: "", emoji: "", source_id: null });
@@ -101,6 +112,7 @@ export default function LessonEditor() {
   const [paste, setPaste] = useState<string | null>(null);
   const [topic, setTopic] = useState("");
   const [textPaste, setTextPaste] = useState("");
+  const [problemCount, setProblemCount] = useState(0);
 
   const setLessonId = (id: string | null) => {
     idRef.current = id;
@@ -123,11 +135,14 @@ export default function LessonEditor() {
     setNote(null);
     setError(null);
     if (!urlId) {
-      setMeta(emptyMeta);
+      const last = readLastGrade();
+      setMeta({ ...emptyMeta, grade: last });
+      if (!last) listChildren().then((kids) => kids[0] && setMeta((m) => (m.grade ? m : { ...m, grade: String(kids[0].grade) })));
       setVocab([emptyV(), emptyV(), emptyV()]);
       setGrammar([]);
       setTexts([]);
       setSources([]);
+      setProblemCount(0);
       setTab("sources");
       setLoading(false);
       return;
@@ -135,11 +150,13 @@ export default function LessonEditor() {
     setLoading(true);
     (async () => {
       const sb = supabase();
-      const [{ data }, c, src] = await Promise.all([
+      const [{ data }, c, src, open] = await Promise.all([
         sb.from("lessons").select("*").eq("id", urlId).maybeSingle(),
         loadContent([urlId]),
         sb.from("lesson_sources").select("*").eq("lesson_id", urlId).order("page").order("position"),
+        sb.from("problem_items").select("id", { count: "exact", head: true }).eq("lesson_id", urlId).eq("mastered", false),
       ]);
+      setProblemCount(open.count ?? 0);
       if (loadedFor.current !== urlId) return;
       const l = data as Lesson | null;
       if (l) setMeta({ title: l.title, textbook: l.textbook ?? "", unit: l.unit ?? "", grade: l.grade ? String(l.grade) : "", notes: l.notes ?? "" });
@@ -241,6 +258,9 @@ export default function LessonEditor() {
       notes: snap.meta.notes.trim() || null,
     });
     if (lr.error) throw lr.error;
+    try {
+      if (snap.meta.grade) localStorage.setItem(LAST_GRADE, snap.meta.grade);
+    } catch {}
     if (isNew) {
       setLessonId(id);
       router.replace(`/rodic/lekcia?id=${id}`);
@@ -315,6 +335,10 @@ export default function LessonEditor() {
       setError("Zadaj názov lekcie.");
       return;
     }
+    if (!meta.grade) {
+      setError("Vyber triedu, pre ktorú je lekcia.");
+      return;
+    }
     setBusy("Ukladám…");
     setError(null);
     try {
@@ -329,6 +353,7 @@ export default function LessonEditor() {
   /** Photos need a saved lesson to attach their exercises to. */
   async function ensureLesson(): Promise<string> {
     if (idRef.current) return idRef.current;
+    if (!meta.grade) throw new Error("Najprv vyber triedu lekcie.");
     let m = meta;
     if (!m.title.trim()) {
       autoTitle.current = true;
@@ -411,11 +436,21 @@ export default function LessonEditor() {
     // replace the previous items of these exercises with the new ones
     const ids = new Set(results.keys());
     const old = (r: { source_id: string | null }) => !!r.source_id && ids.has(r.source_id);
-    const nextDeleted: Deleted = {
-      vocab: [...deleted.vocab, ...vocab.filter(old).map((r) => r.id)],
-      grammar: [...deleted.grammar, ...grammar.filter(old).map((r) => r.id)],
-      texts: [...deleted.texts, ...texts.filter(old).map((r) => r.id)],
+    // same word / sentence / gap-fill again keeps its id, so the child's progress and problem questions stay linked
+    const oldVocab = new Map(vocab.filter(old).map((r) => [normalize(r.en), r.id]));
+    const oldGrammar = new Map(grammar.filter(old).map((r) => [normalize(r.prompt), r.id]));
+    const oldSentences = new Map(
+      texts
+        .filter(old)
+        .flatMap((t) => t.sentences)
+        .map((x) => [normalize(x.en), x.id]),
+    );
+    const reuse = (m: Map<string, string>, key: string) => {
+      const id = m.get(key);
+      if (id) m.delete(key);
+      return id ?? uid();
     };
+    const keepIds = (list: Sentence[]) => withIds(list).map((x) => ({ ...x, id: reuse(oldSentences, normalize(x.en)) }));
     const nv = vocab.filter((r) => !old(r) && (r.en.trim() || r.sk.trim()));
     const ng = grammar.filter((r) => !old(r));
     const nt = texts.filter((r) => !old(r));
@@ -429,12 +464,22 @@ export default function LessonEditor() {
         const key = normalize(v.en);
         if (known.has(key)) continue;
         known.add(key);
-        nv.push({ ...emptyV(), en: v.en, sk: v.sk, example_en: v.example_en ?? "", example_sk: v.example_sk ?? "", emoji: v.emoji ?? "", source_id: src.id });
+        nv.push({
+          ...emptyV(),
+          id: reuse(oldVocab, key),
+          en: v.en,
+          sk: v.sk,
+          example_en: v.example_en ?? "",
+          example_sk: v.example_sk ?? "",
+          emoji: v.emoji ?? "",
+          source_id: src.id,
+        });
         added.v++;
       }
       for (const g of res.grammar) {
         ng.push({
           ...emptyG(),
+          id: reuse(oldGrammar, normalize(g.prompt)),
           prompt: g.prompt,
           answer: g.answer,
           options: (g.options ?? []).join(", "),
@@ -446,14 +491,20 @@ export default function LessonEditor() {
       }
       const uses = (["reading", "listening"] as const).filter((u) => src.types.includes(u));
       if (res.text?.sentences.length && uses.length) {
-        nt.push({ id: uid(), title: res.text.title || name, sentences: withIds(res.text.sentences), uses: [...uses], source_id: src.id });
+        nt.push({ id: uid(), title: res.text.title || name, sentences: keepIds(res.text.sentences), uses: [...uses], source_id: src.id });
         added.t++;
       }
       if (res.writing.length) {
-        nt.push({ id: uid(), title: `${name}: vety na písanie`, sentences: withIds(res.writing), uses: ["writing"], source_id: src.id });
+        nt.push({ id: uid(), title: `${name}: vety na písanie`, sentences: keepIds(res.writing), uses: ["writing"], source_id: src.id });
         added.w += res.writing.length;
       }
     }
+    const kept = new Set([...nv, ...ng].map((r) => r.id));
+    const nextDeleted: Deleted = {
+      vocab: [...deleted.vocab, ...vocab.filter(old).map((r) => r.id)].filter((id) => !kept.has(id)),
+      grammar: [...deleted.grammar, ...grammar.filter(old).map((r) => r.id)].filter((id) => !kept.has(id)),
+      texts: [...deleted.texts, ...texts.filter(old).map((r) => r.id)],
+    };
     setVocab(nv);
     setGrammar(ng);
     setTexts(nt);
@@ -576,13 +627,19 @@ export default function LessonEditor() {
           <Field label="Kapitola / unit">
             <Input value={meta.unit} onChange={(e) => setM({ unit: e.target.value })} placeholder="napr. 3B" />
           </Field>
-          <Field label="Ročník">
-            <Input
-              inputMode="numeric"
+          <Field label="Trieda" hint="Žiak uvidí lekciu po výbere tejto triedy.">
+            <select
               value={meta.grade}
-              onChange={(e) => setM({ grade: e.target.value.replace(/\D/g, "").slice(0, 1) })}
-              placeholder="napr. 4"
-            />
+              onChange={(e) => setM({ grade: e.target.value })}
+              className={cx("w-full h-11 rounded-xl border-2 bg-card px-3 font-semibold", meta.grade ? "border-line" : "border-sun-deep")}
+            >
+              <option value="">Vyber triedu</option>
+              {GRADES.map((g) => (
+                <option key={g} value={g}>
+                  {gradeLabel(g)}
+                </option>
+              ))}
+            </select>
           </Field>
         </div>
       </Card>
@@ -595,6 +652,7 @@ export default function LessonEditor() {
           { value: "vocab", label: `Slovíčka (${vocab.filter((v) => v.en).length})` },
           { value: "grammar", label: `Gramatika (${grammar.length})` },
           { value: "texts", label: `Texty a vety (${texts.length})` },
+          ...(lessonId ? [{ value: "problems" as const, label: `Problémové otázky${problemCount ? ` (${problemCount})` : ""}` }] : []),
         ]}
       />
 
@@ -612,7 +670,8 @@ export default function LessonEditor() {
 
       {tab === "sources" && (
         <div className="space-y-6">
-          <UploadPanel hasSources={sources.length > 0} ai={ai} disabled={!!busy} importer={importer} />
+          <UploadPanel hasSources={sources.length > 0} ai={ai} disabled={!!busy || !meta.grade} importer={importer} />
+          {!meta.grade && <p className="text-sm font-bold text-sun-deep -mt-3">Najprv hore vyber triedu lekcie.</p>}
           {pages.map((p) => {
             const list = sources.filter((s) => s.page === p);
             return (
@@ -757,6 +816,8 @@ export default function LessonEditor() {
           </Button>
         </Card>
       )}
+
+      {tab === "problems" && lessonId && <ProblemsPanel lessonId={lessonId} onCount={setProblemCount} />}
 
       {tab === "texts" && (
         <Card className="p-4 sm:p-5 space-y-4">

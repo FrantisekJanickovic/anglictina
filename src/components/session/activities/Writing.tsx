@@ -7,7 +7,7 @@ import { Button, cx } from "../../ui";
 import type { SessionCtx } from "../engine";
 import { BottomBar, Progress, PromptCard, SentenceBox, useRequeue } from "../parts";
 
-export type WritingItem = { id: string; en: string; sk: string; key: string };
+export type WritingItem = { id: string; en: string; sk: string; key: string; lesson_id?: string };
 type Word = { text: string; id: number };
 
 /** Words of a sentence without sentence punctuation, e.g. "I've got a dog." → ["I've", "got", "a", "dog"]. */

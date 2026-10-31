@@ -57,7 +57,7 @@ function ProfilePicker() {
                 >
                   <span className="text-6xl leading-none group-hover:scale-110 transition-transform">{c.avatar}</span>
                   <span className="text-xl font-black">{c.name}</span>
-                  <span className="text-sm text-slate font-semibold">{c.grade}. ročník</span>
+                  <span className="text-sm text-slate font-semibold">{c.grade}. trieda</span>
                 </Link>
               ))}
             </div>

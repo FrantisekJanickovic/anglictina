@@ -89,7 +89,7 @@ export default function LoginPage() {
         </Card>
         <p className="text-center mt-5">
           <Link href="/ukazka" className="font-bold text-sky hover:underline">
-            Vyskúšať ukážkovú hodinu bez účtu
+            Vyskúšať ukážkový tréning bez účtu
           </Link>
         </p>
       </div>

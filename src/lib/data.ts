@@ -1,7 +1,7 @@
 "use client";
 
 import { supabase } from "./supabase";
-import type { Child, GrammarItem, ItemProgress, Lesson, LessonText, TextUse, VocabItem } from "./types";
+import type { Child, GrammarItem, ItemProgress, Lesson, LessonText, ProblemItem, TextUse, VocabItem } from "./types";
 
 export async function listChildren(): Promise<Child[]> {
   const { data, error } = await supabase().from("children").select("*").order("created_at");
@@ -65,23 +65,38 @@ export async function loadProgress(childId: string): Promise<Map<string, ItemPro
   return new Map((data as ItemProgress[]).map((p) => [p.item_id, p]));
 }
 
-/** Vocab items of other lessons that are due for review (for the warm-up). */
-export async function loadDueVocab(childId: string, excludeLessonIds: string[], limit = 5): Promise<VocabItem[]> {
+/** Problem questions of a child, optionally only for some lessons. */
+export async function loadProblems(childId: string, opts: { lessonIds?: string[]; openOnly?: boolean } = {}): Promise<ProblemItem[]> {
+  let q = supabase().from("problem_items").select("*").eq("child_id", childId);
+  if (opts.lessonIds) {
+    if (!opts.lessonIds.length) return [];
+    q = q.in("lesson_id", opts.lessonIds);
+  }
+  if (opts.openOnly) q = q.eq("mastered", false);
+  const { data, error } = await q;
+  if (error) throw error;
+  return (data ?? []) as ProblemItem[];
+}
+
+export type ReviewItems = { vocab: VocabItem[]; grammar: GrammarItem[]; sentences: { id: string; en: string; sk: string; key: string; lesson_id: string }[] };
+
+/** The actual questions behind problem items (items deleted since then are skipped). */
+export async function loadReviewItems(problems: ProblemItem[]): Promise<ReviewItems> {
   const sb = supabase();
-  const { data, error } = await sb
-    .from("item_progress")
-    .select("item_id")
-    .eq("child_id", childId)
-    .eq("item_type", "vocab")
-    .lte("due_at", new Date().toISOString())
-    .order("box")
-    .limit(40);
-  if (error || !data?.length) return [];
-  const ids = data.map((d) => d.item_id as string);
-  let q = sb.from("vocab_items").select("*").in("id", ids);
-  if (excludeLessonIds.length) q = q.not("lesson_id", "in", `(${excludeLessonIds.join(",")})`);
-  const { data: items } = await q.limit(limit);
-  return (items ?? []) as VocabItem[];
+  const ids = (t: string) => problems.filter((p) => p.item_type === t).map((p) => p.item_id);
+  const vIds = ids("vocab");
+  const gIds = ids("grammar");
+  const sIds = new Set(ids("sentence"));
+  const sLessons = [...new Set(problems.filter((p) => p.item_type === "sentence").map((p) => p.lesson_id))];
+  const [v, g, t] = await Promise.all([
+    vIds.length ? sb.from("vocab_items").select("*").in("id", vIds) : Promise.resolve({ data: [] }),
+    gIds.length ? sb.from("grammar_items").select("*").in("id", gIds) : Promise.resolve({ data: [] }),
+    sLessons.length ? sb.from("lesson_texts").select("*").in("lesson_id", sLessons) : Promise.resolve({ data: [] }),
+  ]);
+  const sentences = ((t.data ?? []) as LessonText[]).flatMap((x) =>
+    (x.sentences ?? []).filter((s) => s.id && sIds.has(s.id)).map((s) => ({ id: s.id!, en: s.en, sk: s.sk, key: s.id!, lesson_id: x.lesson_id })),
+  );
+  return { vocab: (v.data ?? []) as VocabItem[], grammar: (g.data ?? []) as GrammarItem[], sentences };
 }
 
 export function todayISO() {

@@ -9,6 +9,7 @@ import { getLockedChild, getPinHash, savePin, setLockedChild, setParentUnlocked 
 import { aiStatus } from "@/lib/ai";
 import { hasAzure } from "@/lib/speech";
 import { supabase } from "@/lib/supabase";
+import { TrainingSettings } from "./training";
 
 export default function SettingsPage() {
   const { session } = useAuth();
@@ -42,6 +43,8 @@ export default function SettingsPage() {
   return (
     <div className="max-w-2xl mx-auto space-y-5">
       <h1 className="text-2xl font-black">Nastavenia</h1>
+
+      <TrainingSettings />
 
       <Card className="p-5 sm:p-6 space-y-4">
         <h2 className="text-lg font-black">PIN rodičovskej zóny</h2>
