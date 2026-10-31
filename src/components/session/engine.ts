@@ -5,6 +5,7 @@ import { phrases } from "@/lib/phrases";
 import { nextProgress, type Outcome } from "@/lib/srs";
 import { speak, type VoiceOpts } from "@/lib/speech";
 import { supabase } from "@/lib/supabase";
+import { itemKey, type CatalogEntry, type ItemTally } from "@/lib/problems";
 import type { ActivityKey, Child, ChildSettings, ItemProgress, ItemType, Lang, VocabItem } from "@/lib/types";
 
 export type DrillItem = VocabItem & { dir: "en_sk" | "sk_en"; key: string };
@@ -43,12 +44,13 @@ export function useSessionEngine(opts: {
   oral: boolean;
   sessionId: string | null;
   progress: Map<string, ItemProgress>;
-  vocabById: Map<string, VocabItem>;
+  catalog: Map<string, CatalogEntry>;
 }) {
-  const { child, settings, oral, sessionId, progress, vocabById } = opts;
+  const { child, settings, oral, sessionId, progress, catalog } = opts;
   const [bubble, setBubble] = useState<Bubble | null>(null);
   const stats = useRef(new Map<ActivityKey, ActivityStat>());
-  const wrongWords = useRef(new Map<string, VocabItem>());
+  const wrongItems = useRef(new Map<string, CatalogEntry>());
+  const tallies = useRef(new Map<string, ItemTally>());
   const promoted = useRef(new Set<string>());
   const streak = useRef(0);
   const xp = useRef(0);
@@ -90,10 +92,16 @@ export function useSessionEngine(opts: {
       }
       xp.current += a.correct ? (outcome === "correct" ? 10 : 5) : 0;
 
-      if (!a.correct && a.itemType === "vocab") {
-        const v = vocabById.get(a.itemId);
-        if (v) wrongWords.current.set(v.id, v);
-      }
+      // per-question result of this training (feeds the problem questions)
+      const k = itemKey(a.itemType, a.itemId);
+      const t = tallies.current.get(k) ?? { type: a.itemType, id: a.itemId, wrong: 0, solid: 0, lastWrong: null };
+      if (!a.correct) {
+        t.wrong++;
+        t.lastWrong = a.given ?? t.lastWrong;
+        const e = catalog.get(k);
+        if (e) wrongItems.current.set(k, e);
+      } else if (!a.hinted && !a.recognition && a.activity !== "flashcards") t.solid++;
+      tallies.current.set(k, t);
 
       // encouragement & motivation
       if (a.correct) {
@@ -131,7 +139,7 @@ export function useSessionEngine(opts: {
         )
         .catch(() => {});
     },
-    [child, settings.motivation, settings.encouragement, sessionId, progress, vocabById, show],
+    [child, settings.motivation, settings.encouragement, sessionId, progress, catalog, show],
   );
 
   const ctx: SessionCtx = useMemo(
@@ -150,7 +158,7 @@ export function useSessionEngine(opts: {
 
   const flush = useCallback(() => chain.current, []);
 
-  return { ctx, bubble, stats, wrongWords, xp, totals, flush };
+  return { ctx, bubble, stats, wrongItems, tallies, xp, totals, flush };
 }
 
 export function toDrill(items: VocabItem[], direction: ChildSettings["direction"]): DrillItem[] {

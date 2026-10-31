@@ -3,13 +3,14 @@
 import { ArrowLeft, Check } from "lucide-react";
 import Link from "next/link";
 import { useMemo, useState } from "react";
+import { GuideButton, GUIDES, type GuideId } from "@/components/guides";
 import type { WritingItem } from "@/components/session/activities/Writing";
-import { toDrill } from "@/components/session/engine";
+import { buildPlan, type Plan } from "@/components/session/plan";
 import Summary, { type SummaryData } from "@/components/session/Summary";
 import { Button, Card, cx } from "@/components/ui";
-import { Runner, type Plan } from "@/app/hodina/session";
-import { ACTIVITIES, DEFAULT_SETTINGS } from "@/lib/settings";
-import { unlockAudio } from "@/lib/speech";
+import { Runner } from "@/app/hodina/session";
+import { ACTIVITIES, DEFAULT_METHODS, DEFAULT_SETTINGS } from "@/lib/settings";
+import { speak, unlockAudio } from "@/lib/speech";
 import { nowMs } from "@/lib/text";
 import type { ActivityKey, Child, ChildSettings, GrammarItem, ItemProgress, LessonText, VocabItem } from "@/lib/types";
 
@@ -100,9 +101,7 @@ const WRITING: WritingItem[] = [
   { id: "w1", en: "I have got a sister.", sk: "Mám sestru." },
   { id: "w2", en: "My father is a teacher.", sk: "Môj otec je učiteľ." },
   { id: "w3", en: "We have got a big dog.", sk: "Máme veľkého psa." },
-].map((w) => ({ ...w, key: w.id }));
-
-const ALL_ON = Object.fromEntries(Object.keys(DEFAULT_SETTINGS.methods).map((k) => [k, true])) as ChildSettings["methods"];
+].map((w) => ({ ...w, key: w.id, lesson_id: L }));
 
 const CHILD: Child = {
   id: "demo",
@@ -119,7 +118,7 @@ const CHILD: Child = {
 
 export default function Demo() {
   const [picked, setPicked] = useState<ActivityKey[]>(["flashcards", "classic"]);
-  const [voice, setVoice] = useState<"female" | "male">("female");
+  const [voice, setVoice] = useState<GuideId>("female");
   const [direction, setDirection] = useState<"en_sk" | "sk_en" | "mixed">("en_sk");
   const [running, setRunning] = useState<Plan | null>(null);
   const [step, setStep] = useState(0);
@@ -127,24 +126,25 @@ export default function Demo() {
   const [summary, setSummary] = useState<SummaryData | null>(null);
   const progress = useMemo(() => new Map<string, ItemProgress>(), []);
 
-  const settings: ChildSettings = { ...DEFAULT_SETTINGS, voice, direction, methods: { ...ALL_ON, interleaving: false } };
-  const acts = ACTIVITIES.filter((a) => a.key !== "warmup");
+  const methods = { ...DEFAULT_METHODS };
+  for (const k of Object.keys(methods) as (keyof typeof methods)[]) methods[k] = picked.includes(k as ActivityKey);
+  methods.dualCoding = true;
+  methods.gamification = true;
+  const settings: ChildSettings = { ...DEFAULT_SETTINGS, voice, direction, wordsPerSession: 0, methods };
+  const acts = ACTIVITIES;
 
   function start() {
     unlockAudio();
-    const drill = toDrill(VOCAB, direction);
-    setRunning({
-      drill,
-      warmup: [],
-      pool: drill,
+    const plan = buildPlan({
+      vocab: VOCAB,
       grammar: GRAMMAR,
-      texts: TEXTS,
-      listening: TEXTS[0].sentences,
-      shadow: VOCAB.slice(0, 4).map((v) => ({ en: v.example_en!, sk: v.example_sk! })),
-      writing: WRITING,
-      activities: acts.map((a) => a.key).filter((k) => picked.includes(k)),
+      texts: [...TEXTS, { id: "t2", lesson_id: L, title: "Vety", position: 1, uses: ["writing"], sentences: WRITING }],
+      review: { vocab: [], grammar: [], sentences: [] },
+      settings,
+      progress,
       lessonTitles: ["Ukážka: My family"],
     });
+    setRunning({ ...plan, steps: plan.steps.filter((s) => picked.includes(s.key)) });
     setStep(0);
     setStartedAt(nowMs());
     setSummary(null);
@@ -159,6 +159,7 @@ export default function Demo() {
         plan={running}
         sessionId={null}
         progress={progress}
+        problemCtx={null}
         step={step}
         setStep={setStep}
         startedAt={startedAt}
@@ -175,8 +176,8 @@ export default function Demo() {
         <ArrowLeft className="size-4" /> Späť
       </Link>
       <div>
-        <h1 className="text-3xl font-black">Ukážková hodina</h1>
-        <p className="text-slate mt-1">Lekcia „My family“ s 8 slovíčkami, gramatikou a textom. Nič sa neukladá.</p>
+        <h1 className="text-3xl font-black">Ukážkový tréning</h1>
+        <p className="text-slate mt-1">Lekcia „My family“ s 8 slovíčkami, gramatikou, vetami a textom. Cvičenia idú v náhodnom poradí. Nič sa neukladá.</p>
       </div>
       <Card className="divide-y divide-line">
         {acts.map((a) => {
@@ -197,12 +198,22 @@ export default function Demo() {
           );
         })}
       </Card>
-      <div className="flex flex-wrap gap-2">
+      <div className="grid grid-cols-2 gap-3">
         {(["female", "male"] as const).map((v) => (
-          <Button key={v} size="sm" variant={voice === v ? "primary" : "outline"} onClick={() => setVoice(v)}>
-            {v === "female" ? "Ženský hlas" : "Mužský hlas"}
-          </Button>
+          <GuideButton
+            key={v}
+            id={v}
+            selected={voice === v}
+            playing={false}
+            onSelect={() => {
+              unlockAudio();
+              setVoice(v);
+              speak(GUIDES[v].hello.en, "en", { gender: v }).then(() => speak(GUIDES[v].hello.sk, "sk", { gender: v }));
+            }}
+          />
         ))}
+      </div>
+      <div className="flex flex-wrap gap-2">
         {(["en_sk", "sk_en", "mixed"] as const).map((d) => (
           <Button key={d} size="sm" variant={direction === d ? "primary" : "outline"} onClick={() => setDirection(d)}>
             {d === "en_sk" ? "EN → SK" : d === "sk_en" ? "SK → EN" : "Oba smery"}
@@ -210,7 +221,7 @@ export default function Demo() {
         ))}
       </div>
       <Button size="xl" variant="sun" onClick={start} disabled={!picked.length}>
-        Spustiť ukážku
+        Začať tréning
       </Button>
     </main>
   );

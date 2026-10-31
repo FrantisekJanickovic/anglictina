@@ -1,6 +1,6 @@
 "use client";
 
-import { Flame, Star } from "lucide-react";
+import { Flame, PartyPopper, Star } from "lucide-react";
 import Link from "next/link";
 import { speak } from "@/lib/speech";
 import type { ActivityKey, Child, ChildSettings } from "@/lib/types";
@@ -10,16 +10,18 @@ import { Progress } from "./parts";
 export type SummaryData = {
   durationSec: number;
   activities: { key: ActivityKey; label: string; total: number; correct: number }[];
-  problemWords: { id: string; en: string; sk: string }[];
+  problems: { key: string; label: string; say: string | null }[];
   xpEarned: number;
   total: number;
   correct: number;
   streak: number;
   todayXp: number;
+  /** problem questions from earlier trainings that are now mastered */
+  masteredNow: number;
 };
 
 function headline(pct: number | null) {
-  if (pct === null) return "Hodina je hotová!";
+  if (pct === null) return "Tréning je hotový!";
   if (pct >= 90) return "Úžasný výkon!";
   if (pct >= 70) return "Veľmi dobrá práca!";
   if (pct >= 50) return "Dobrá práca, ide to!";
@@ -87,6 +89,15 @@ export default function Summary({
         </div>
       )}
 
+      {data.masteredNow > 0 && (
+        <div className="rounded-2xl bg-leaf-soft text-leaf px-4 py-3 font-black flex items-center gap-2 anim-pop" role="status">
+          <PartyPopper className="size-5 shrink-0" />
+          {data.masteredNow === 1
+            ? "Jednu otázku, ktorá ti predtým robila problém, už vieš!"
+            : `${data.masteredNow} ${data.masteredNow < 5 ? "otázky" : "otázok"}, ktoré ti predtým robili problém, už vieš!`}
+        </div>
+      )}
+
       <Card className="divide-y divide-line">
         {data.activities.map((a) => (
           <div key={a.key} className="flex justify-between px-4 py-3">
@@ -96,15 +107,14 @@ export default function Summary({
         ))}
       </Card>
 
-      {data.problemWords.length > 0 && (
+      {data.problems.length > 0 && (
         <section>
-          <h2 className="font-black mb-2">Tieto slovíčka si ešte zopakujeme</h2>
+          <h2 className="font-black mb-2">Toto si ešte zopakujeme</h2>
           <Card className="divide-y divide-line">
-            {data.problemWords.map((w) => (
-              <div key={w.id} className="flex items-center gap-3 px-4 py-2.5">
-                <SpeakButton size="sm" onClick={() => speak(w.en, "en", voice)} />
-                <span className="font-black">{w.en}</span>
-                <span className="text-slate">{w.sk}</span>
+            {data.problems.map((w) => (
+              <div key={w.key} className="flex items-center gap-3 px-4 py-2.5">
+                {w.say ? <SpeakButton size="sm" onClick={() => speak(w.say!, "en", voice)} /> : <span className="size-9 shrink-0" />}
+                <span className="font-bold">{w.label}</span>
               </div>
             ))}
           </Card>
@@ -112,12 +122,12 @@ export default function Summary({
       )}
 
       <div className="mt-auto flex flex-col gap-2 safe-bottom">
-        {data.problemWords.length > 0 && review && (
+        {data.problems.length > 0 && review && (
           <a href={review} className={buttonClass("sun", "xl")}>
             Precvičiť chyby
           </a>
         )}
-        <Link href={done} className={buttonClass(data.problemWords.length && review ? "outline" : "primary", "xl")}>
+        <Link href={done} className={buttonClass(data.problems.length && review ? "outline" : "primary", "xl")}>
           Hotovo
         </Link>
       </div>

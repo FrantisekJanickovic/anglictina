@@ -19,7 +19,7 @@ const STREAK: Record<number, string[]> = {
 const HALFWAY = ["Už si v polovici, len tak ďalej!", "Polovica je za tebou!"];
 const LAST = ["Posledné slovíčko!", "Ešte posledné a máš hotovo!"];
 const START = ["Ideme na to, {name}!", "Ahoj {name}, poďme sa učiť!", "Začíname, {name}!"];
-const FINISH = ["Hotovo! Zase pár slovíčok v hlave navyše.", "Super hodina, {name}!", "Výborná práca, hodina je za tebou!"];
+const FINISH = ["Hotovo! Zase pár slovíčok v hlave navyše.", "Super tréning, {name}!", "Výborná práca, tréning je za tebou!"];
 
 const fill = (s: string, name: string) => s.replace("{name}", name);
 

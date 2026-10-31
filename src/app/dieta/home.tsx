@@ -32,13 +32,7 @@ export default function ChildHome() {
       const today = todayISO();
       const [c, p, t, l] = await Promise.all([
         getChild(id),
-        sb
-          .from("item_progress")
-          .select("item_id", { count: "exact", head: true })
-          .eq("child_id", id)
-          .eq("item_type", "vocab")
-          .gt("wrong_count", 0)
-          .lte("box", 2),
+        sb.from("problem_items").select("id", { count: "exact", head: true }).eq("child_id", id).eq("mastered", false),
         sb.from("sessions").select("xp_earned").eq("child_id", id).gte("started_at", `${today}T00:00:00`),
         sb.from("sessions").select("*").eq("child_id", id).not("ended_at", "is", null).order("started_at", { ascending: false }).limit(1),
       ]);
@@ -77,7 +71,7 @@ export default function ChildHome() {
       <section className="text-center pt-4">
         <div className="text-8xl leading-none">{child.avatar}</div>
         <h1 className="text-4xl font-black mt-3">Ahoj, {child.name}!</h1>
-        <p className="text-slate font-bold mt-1">{practicedToday ? "Dnes už máš hodinu za sebou. Ďalšia?" : "Poďme si zopakovať angličtinu."}</p>
+        <p className="text-slate font-bold mt-1">{practicedToday ? "Dnes už máš tréning za sebou. Dáš ešte jeden?" : "Poďme si zatrénovať angličtinu."}</p>
       </section>
 
       {g && (
@@ -104,7 +98,7 @@ export default function ChildHome() {
 
       <div className="flex flex-col gap-3 mt-auto">
         <Link href={`/hodina?dieta=${child.id}`} className={buttonClass("sun", "xl", "!h-20 !text-2xl")}>
-          Začať hodinu
+          Ideme trénovať
         </Link>
         {problems > 0 && (
           <Link href={`/hodina?dieta=${child.id}&rezim=chyby`} className={buttonClass("outline", "xl")}>
@@ -113,7 +107,7 @@ export default function ChildHome() {
         )}
         {lastPct !== null && last && (
           <p className="text-center text-sm font-bold text-slate">
-            Minulá hodina: {lastPct} % · {new Date(last.started_at).toLocaleDateString("sk-SK", { weekday: "long", day: "numeric", month: "numeric" })}
+            Minulý tréning: {lastPct} % · {new Date(last.started_at).toLocaleDateString("sk-SK", { weekday: "long", day: "numeric", month: "numeric" })}
           </p>
         )}
       </div>

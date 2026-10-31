@@ -1,14 +1,14 @@
 "use client";
 
 import { ChevronDown } from "lucide-react";
+import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { Card, cx, Segmented, Spinner } from "@/components/ui";
-import { listChildren } from "@/lib/data";
+import { listChildren, listLessons, loadProblems, type LessonWithCounts } from "@/lib/data";
+import { PROBLEM_TYPE_LABEL } from "@/lib/problems";
 import { supabase } from "@/lib/supabase";
-import type { Child, SessionRow } from "@/lib/types";
-
-type Problem = { id: string; en: string; sk: string; wrong: number; box: number };
+import type { Child, ProblemItem, SessionRow } from "@/lib/types";
 
 function fmtDuration(sec?: number) {
   if (!sec) return "–";
@@ -22,7 +22,8 @@ export default function History() {
   const [children, setChildren] = useState<Child[] | null>(null);
   const [childId, setChildId] = useState<string>("");
   const [sessions, setSessions] = useState<SessionRow[]>([]);
-  const [problems, setProblems] = useState<Problem[]>([]);
+  const [problems, setProblems] = useState<ProblemItem[]>([]);
+  const [lessons, setLessons] = useState<LessonWithCounts[]>([]);
   const [open, setOpen] = useState<string | null>(focus);
 
   useEffect(() => {
@@ -30,6 +31,9 @@ export default function History() {
       setChildren(c);
       if (c[0]) setChildId(c[0].id);
     });
+    listLessons()
+      .then(setLessons)
+      .catch(() => setLessons([]));
   }, []);
 
   useEffect(() => {
@@ -38,29 +42,10 @@ export default function History() {
     (async () => {
       const [s, p] = await Promise.all([
         sb.from("sessions").select("*").eq("child_id", childId).not("ended_at", "is", null).order("started_at", { ascending: false }).limit(50),
-        sb
-          .from("item_progress")
-          .select("item_id, wrong_count, box")
-          .eq("child_id", childId)
-          .eq("item_type", "vocab")
-          .gt("wrong_count", 0)
-          .order("box")
-          .order("wrong_count", { ascending: false })
-          .limit(40),
+        loadProblems(childId, { openOnly: true }),
       ]);
       setSessions((s.data ?? []) as SessionRow[]);
-      const prog = (p.data ?? []) as { item_id: string; wrong_count: number; box: number }[];
-      if (prog.length) {
-        const { data: items } = await sb
-          .from("vocab_items")
-          .select("id, en, sk")
-          .in(
-            "id",
-            prog.map((x) => x.item_id),
-          );
-        const map = new Map((items ?? []).map((i) => [i.id as string, i as { id: string; en: string; sk: string }]));
-        setProblems(prog.filter((x) => map.has(x.item_id)).map((x) => ({ ...map.get(x.item_id)!, wrong: x.wrong_count, box: x.box })));
-      } else setProblems([]);
+      setProblems(p.sort((a, b) => b.wrong_count - a.wrong_count));
     })();
   }, [childId]);
 
@@ -87,7 +72,7 @@ export default function History() {
 
       <div className="grid grid-cols-3 gap-3">
         <Card className="p-4">
-          <div className="text-xs font-bold text-slate">Hodín</div>
+          <div className="text-xs font-bold text-slate">Tréningov</div>
           <div className="text-2xl font-black">{sessions.length}</div>
         </Card>
         <Card className="p-4">
@@ -101,23 +86,37 @@ export default function History() {
       </div>
 
       <section>
-        <h2 className="text-lg font-black mb-3">Problémové slovíčka</h2>
+        <h2 className="text-lg font-black mb-3">Nezvládnuté problémové otázky</h2>
         {problems.length === 0 ? (
-          <Card className="p-5 text-slate">Žiadne. Keď dieťa urobí chybu, slovíčko sa tu objaví a v hodinách sa bude vracať častejšie.</Card>
+          <Card className="p-5 text-slate">Žiadne. Otázky, s ktorými má dieťa problém, sa tu objavia po tréningu a budú sa mu vracať, kým ich nezvládne.</Card>
         ) : (
-          <Card className="p-4 flex flex-wrap gap-2">
-            {problems.map((p) => (
-              <span
-                key={p.id}
-                className={cx(
-                  "rounded-xl px-3 py-1.5 text-sm font-bold border",
-                  p.box <= 2 ? "bg-tomato-soft border-tomato/30 text-tomato" : "bg-paper border-line text-ink-soft",
-                )}
-                title={`Chyby: ${p.wrong}, úroveň ${p.box}/5`}
-              >
-                {p.en} <span className="font-semibold opacity-70">– {p.sk}</span> <span className="opacity-60">×{p.wrong}</span>
-              </span>
-            ))}
+          <Card className="divide-y divide-line">
+            {lessons
+              .filter((l) => problems.some((p) => p.lesson_id === l.id))
+              .map((l) => {
+                const list = problems.filter((p) => p.lesson_id === l.id);
+                return (
+                  <div key={l.id} className="p-4 space-y-2">
+                    <div className="flex items-baseline justify-between gap-2">
+                      <h3 className="font-black">{l.title}</h3>
+                      <Link href={`/rodic/lekcia?id=${l.id}`} className="text-sm font-bold text-sky hover:underline shrink-0">
+                        Otvoriť lekciu
+                      </Link>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {list.map((p) => (
+                        <span
+                          key={p.id}
+                          className="rounded-xl px-3 py-1.5 text-sm font-bold border bg-tomato-soft border-tomato/30 text-tomato"
+                          title={PROBLEM_TYPE_LABEL[p.item_type]}
+                        >
+                          {p.label} <span className="opacity-60">×{p.wrong_count}</span>
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
           </Card>
         )}
       </section>
@@ -125,7 +124,7 @@ export default function History() {
       <section>
         <h2 className="text-lg font-black mb-3">Hodiny</h2>
         {sessions.length === 0 ? (
-          <Card className="p-5 text-slate">Zatiaľ žiadna dokončená hodina.</Card>
+          <Card className="p-5 text-slate">Zatiaľ žiadny dokončený tréning.</Card>
         ) : (
           <Card className="divide-y divide-line">
             {sessions.map((s) => {
@@ -166,9 +165,15 @@ export default function History() {
                           </div>
                         ))}
                       </div>
-                      {!!s.summary?.problemWords?.length && (
+                      {!!s.summary?.problems?.length && (
                         <div className="text-sm">
-                          <span className="font-bold">Chyby v tejto hodine: </span>
+                          <span className="font-bold">Chyby v tomto tréningu: </span>
+                          {s.summary.problems.map((w) => w.label).join(", ")}
+                        </div>
+                      )}
+                      {!s.summary?.problems && !!s.summary?.problemWords?.length && (
+                        <div className="text-sm">
+                          <span className="font-bold">Chyby v tomto tréningu: </span>
                           {s.summary.problemWords.map((w) => `${w.en} (${w.sk})`).join(", ")}
                         </div>
                       )}

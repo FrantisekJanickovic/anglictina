@@ -153,7 +153,7 @@ export default function ChildEditor() {
           </div>
         </div>
         <div className="grid sm:grid-cols-2 gap-4">
-          <Field label="Ročník">
+          <Field label="Trieda">
             <select
               value={grade}
               onChange={(e) => setGrade(Number(e.target.value))}
@@ -161,7 +161,7 @@ export default function ChildEditor() {
             >
               {Array.from({ length: 9 }, (_, i) => i + 1).map((g) => (
                 <option key={g} value={g}>
-                  {g}. ročník ZŠ
+                  {g}. trieda ZŠ
                 </option>
               ))}
             </select>
@@ -222,8 +222,8 @@ export default function ChildEditor() {
             value={s.voice}
             onChange={(v) => set("voice", v)}
             options={[
-              { value: "female", label: "Ženský hlas" },
-              { value: "male", label: "Mužský hlas" },
+              { value: "female", label: "Ema (ženský hlas)" },
+              { value: "male", label: "Leo (mužský hlas)" },
             ]}
           />
           <SpeakButton onClick={testVoice} label="Vyskúšať hlas" />
@@ -239,11 +239,11 @@ export default function ChildEditor() {
           checked={s.motivation}
           onChange={(v) => set("motivation", v)}
           label="Motivačné hlášky"
-          description="Pri sérii správnych odpovedí, v polovici a na konci hodiny."
+          description="Pri sérii správnych odpovedí, v polovici a na konci tréningu."
         />
       </Section>
 
-      <Section title="Precvičovanie" description="Predvolené hodnoty; pred hodinou sa dajú zmeniť.">
+      <Section title="Precvičovanie" description="Platí pre každý tréning tohto dieťaťa.">
         <Field label="Smer prekladu">
           <Segmented
             value={s.direction}
@@ -286,7 +286,7 @@ export default function ChildEditor() {
             ]}
           />
         </Field>
-        <Field label="Slovíčok na hodinu">
+        <Field label="Slovíčok na tréning">
           <Segmented
             value={String(s.wordsPerSession)}
             onChange={(v) => set("wordsPerSession", Number(v))}

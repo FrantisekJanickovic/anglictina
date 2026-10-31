@@ -8,10 +8,8 @@ export const DEFAULT_METHODS: Record<MethodKey, boolean> = {
   dictation: false,
   speed: false,
   shadowing: false,
-  interleaving: false,
   dualCoding: false,
   gamification: false,
-  warmup: false,
 };
 
 export const DEFAULT_SETTINGS: ChildSettings = {
@@ -29,11 +27,9 @@ export const DEFAULT_SETTINGS: ChildSettings = {
 };
 
 export function mergeSettings(s: Partial<ChildSettings> | null | undefined): ChildSettings {
-  return {
-    ...DEFAULT_SETTINGS,
-    ...(s ?? {}),
-    methods: { ...DEFAULT_METHODS, ...(s?.methods ?? {}) },
-  };
+  const methods = { ...DEFAULT_METHODS };
+  for (const k of Object.keys(DEFAULT_METHODS) as MethodKey[]) if (typeof s?.methods?.[k] === "boolean") methods[k] = s.methods[k];
+  return { ...DEFAULT_SETTINGS, ...(s ?? {}), methods };
 }
 
 export type MethodInfo = {
@@ -99,20 +95,6 @@ export const METHODS: MethodInfo[] = [
     kind: "activity",
   },
   {
-    key: "warmup",
-    label: "Rozcvička z minulých lekcií",
-    what: "Na začiatku hodiny 5 slovíčok zo starších lekcií, ktoré je čas zopakovať.",
-    why: "Rozložené opakovanie v čase bráni zabúdaniu.",
-    kind: "modifier",
-  },
-  {
-    key: "interleaving",
-    label: "Premiešanie",
-    what: "Slovíčka z viacerých lekcií sa premiešajú namiesto radenia po lekciách.",
-    why: "Mozog sa učí rozlišovať, nie len opakovať v rade. Pamäť je trvácnejšia.",
-    kind: "modifier",
-  },
-  {
     key: "dualCoding",
     label: "Obrázok k slovíčku",
     what: "Ku každému slovíčku sa zobrazí emoji obrázok.",
@@ -123,13 +105,12 @@ export const METHODS: MethodInfo[] = [
     key: "gamification",
     label: "Body a séria dní",
     what: "Body za správne odpovede, séria dní a denný cieľ.",
-    why: "Motivuje k pravidelnosti, ktorá je dôležitejšia ako dĺžka hodiny.",
+    why: "Motivuje k pravidelnosti, ktorá je dôležitejšia ako dĺžka tréningu.",
     kind: "modifier",
   },
 ];
 
 export const ACTIVITIES: { key: ActivityKey; label: string; method?: MethodKey; scored: boolean }[] = [
-  { key: "warmup", label: "Rozcvička", method: "warmup", scored: true },
   { key: "flashcards", label: "Kartičky", method: "flashcards", scored: true },
   { key: "classic", label: "Slovíčka", method: "classic", scored: true },
   { key: "match", label: "Spájanie dvojíc", method: "match", scored: true },
@@ -147,6 +128,9 @@ export const activityLabel = (k: ActivityKey) => ACTIVITIES.find((a) => a.key ==
 
 export const SKILLS = ["Slovíčka", "Pravopis", "Výslovnosť", "Počúvanie", "Čítanie", "Gramatika", "Rozprávanie"];
 export const LIKES = ["Hry", "Súťaženie", "Rýchle úlohy", "Obrázky", "Pokojné tempo"];
+
+export const GRADES = [1, 2, 3, 4, 5, 6, 7, 8, 9];
+export const gradeLabel = (g: number) => `${g}. trieda`;
 
 export const LEVELS: { value: "zaciatocnik" | "mierne_pokrocily" | "pokrocily"; label: string }[] = [
   { value: "zaciatocnik", label: "Začiatočník" },
@@ -173,15 +157,16 @@ export function recommendSettings(q: Questionnaire, current: ChildSettings): { s
   }
   if (weak.has("Počúvanie")) {
     m.dictation = true;
-    reasons.push("Slabšie počúvanie: zapnutý Diktát. V hodine odporúčam aj Počúvanie.");
+    reasons.push("Slabšie počúvanie: zapnutý Diktát. Pri textoch lekcie zapni aj Počúvanie.");
   }
   if (weak.has("Výslovnosť") || weak.has("Rozprávanie")) {
     m.shadowing = true;
     reasons.push("Výslovnosť a rozprávanie: zapnuté Opakuj po mne.");
   }
   if (weak.has("Slovíčka")) {
-    m.warmup = true;
-    reasons.push("Slabšie slovíčka: zapnutá Rozcvička z minulých lekcií.");
+    m.classic = true;
+    m.scramble = true;
+    reasons.push("Slabšie slovíčka: zapnuté Klasické precvičovanie a Poskladaj slovo.");
   }
   if (likes.has("Hry") || likes.has("Súťaženie")) {
     m.match = true;
@@ -198,10 +183,10 @@ export function recommendSettings(q: Questionnaire, current: ChildSettings): { s
   }
   if (q.attention === "short") {
     words = 8;
-    reasons.push("Kratšia pozornosť: 8 slovíčok na hodinu.");
+    reasons.push("Kratšia pozornosť: 8 slovíčok na tréning.");
   } else if (q.attention === "long") {
     words = 20;
-    reasons.push("Dlhšia pozornosť: 20 slovíčok na hodinu.");
+    reasons.push("Dlhšia pozornosť: 20 slovíčok na tréning.");
   }
   if (reasons.length === 0) reasons.push("Dotazník nemení predvolené nastavenie: klasika a kartičky.");
   return { settings: { ...current, methods: m, wordsPerSession: words, hintMode: hint }, reasons };

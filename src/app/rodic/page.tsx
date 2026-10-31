@@ -24,15 +24,15 @@ export default function ParentHome() {
         listChildren(),
         listLessons(),
         sb.from("sessions").select("*").not("ended_at", "is", null).order("started_at", { ascending: false }).limit(6),
-        sb.from("item_progress").select("child_id, box, wrong_count"),
+        sb.from("problem_items").select("child_id").eq("mastered", false),
       ]);
       setChildren(c);
       setLessons(l);
       setRecent((s.data ?? []) as SessionRow[]);
       const st: Stats = {};
       for (const ch of c) st[ch.id] = { problems: 0, sessions: 0 };
-      for (const row of (p.data ?? []) as { child_id: string; box: number; wrong_count: number }[]) {
-        if (row.box <= 2 && row.wrong_count > 0 && st[row.child_id]) st[row.child_id].problems++;
+      for (const row of (p.data ?? []) as { child_id: string }[]) {
+        if (st[row.child_id]) st[row.child_id].problems++;
       }
       setStats(st);
     })().catch(() => setChildren([]));
@@ -70,7 +70,7 @@ export default function ParentHome() {
                     </Link>
                   </div>
                   <p className="text-sm text-slate font-semibold">
-                    {c.grade}. ročník · {LEVELS.find((l) => l.value === c.level)?.label}
+                    {c.grade}. trieda · {LEVELS.find((l) => l.value === c.level)?.label}
                   </p>
                   <dl className="mt-3 grid grid-cols-3 gap-2 text-center">
                     <div className="rounded-xl bg-paper py-2">
@@ -122,7 +122,7 @@ export default function ParentHome() {
 
       {recent.length > 0 && (
         <section>
-          <h2 className="text-2xl font-black mb-4">Posledné hodiny</h2>
+          <h2 className="text-2xl font-black mb-4">Posledné tréningy</h2>
           <Card className="divide-y divide-line">
             {recent.map((s) => {
               const ch = childName(s.child_id);
