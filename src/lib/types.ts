@@ -63,6 +63,7 @@ export type VocabItem = {
   example_sk: string | null;
   emoji: string | null;
   position: number;
+  source_id?: string | null;
 };
 
 export type GrammarItem = {
@@ -74,21 +75,48 @@ export type GrammarItem = {
   translation_sk: string | null;
   explanation_sk: string | null;
   position: number;
+  source_id?: string | null;
 };
 
-export type Sentence = { en: string; sk: string };
+export type Sentence = { id?: string; en: string; sk: string };
+
+/** What a text is used for in a session. */
+export type TextUse = "reading" | "listening" | "writing";
 
 export type LessonText = {
   id: string;
   lesson_id: string;
   title: string | null;
   sentences: Sentence[];
+  uses: TextUse[];
+  position: number;
+  source_id?: string | null;
+};
+
+/** Practice types a parent can assign to an exercise from the textbook. */
+export type SourceType = "vocab" | "grammar" | "reading" | "listening" | "writing" | "skip";
+
+/** One exercise transcribed from a textbook photo. */
+export type LessonSource = {
+  id: string;
+  lesson_id: string;
+  page: number;
+  label: string | null;
+  instruction: string | null;
+  content: string;
+  note: string | null;
+  types: SourceType[];
+  suggested: SourceType[];
+  applied_types: SourceType[] | null;
+  applied_at: string | null;
   position: number;
 };
 
+export type ItemType = "vocab" | "grammar" | "sentence";
+
 export type ItemProgress = {
   child_id: string;
-  item_type: "vocab" | "grammar";
+  item_type: ItemType;
   item_id: string;
   box: number;
   due_at: string;
@@ -118,4 +146,4 @@ export type SessionSummary = {
 };
 
 export type ActivityKey =
-  "warmup" | "flashcards" | "classic" | "match" | "scramble" | "dictation" | "speed" | "shadowing" | "grammar" | "reading" | "listening";
+  "warmup" | "flashcards" | "classic" | "match" | "scramble" | "dictation" | "speed" | "shadowing" | "grammar" | "writing" | "reading" | "listening";

@@ -1,22 +1,39 @@
 "use client";
 
-import { ArrowLeft, Camera, Check, ClipboardPaste, Plus, Sparkles, Trash2, X } from "lucide-react";
+import { ArrowLeft, Check, ClipboardPaste, Plus, Sparkles, Trash2, Wand2, X } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { Button, Card, cx, ErrorNote, Field, Input, Segmented, Spinner, Textarea } from "@/components/ui";
-import { aiStatus, enrichVocab, generateGrammar, importFromPhoto, translateSentences } from "@/lib/ai";
+import { aiStatus, buildFromSource, enrichVocab, generateGrammar, translateSentences, type BuildResult, type PageResult } from "@/lib/ai";
 import { loadContent } from "@/lib/data";
+import { effective, isPending } from "@/lib/sources";
 import { supabase } from "@/lib/supabase";
-import type { Lesson } from "@/lib/types";
+import { normalize } from "@/lib/text";
+import type { Lesson, LessonSource, Sentence, SourceType, TextUse } from "@/lib/types";
+import { pl, SourceCard, UploadPanel, usePageImport } from "./sources";
 
-type VRow = { id: string; en: string; sk: string; example_en: string; example_sk: string; emoji: string };
-type GRow = { id: string; prompt: string; answer: string; options: string; translation_sk: string; explanation_sk: string };
-type TRow = { id: string; title: string; sentences: { en: string; sk: string }[] };
+type VRow = { id: string; en: string; sk: string; example_en: string; example_sk: string; emoji: string; source_id: string | null };
+type GRow = { id: string; prompt: string; answer: string; options: string; translation_sk: string; explanation_sk: string; source_id: string | null };
+type SRow = { id: string; en: string; sk: string };
+type TRow = { id: string; title: string; sentences: SRow[]; uses: TextUse[]; source_id: string | null };
+type Meta = { title: string; textbook: string; unit: string; grade: string; notes: string };
+type Deleted = { vocab: string[]; grammar: string[]; texts: string[] };
+type Snapshot = { meta: Meta; vocab: VRow[]; grammar: GRow[]; texts: TRow[]; deleted: Deleted };
+type Tab = "sources" | "vocab" | "grammar" | "texts";
 
 const uid = () => crypto.randomUUID();
-const emptyV = (): VRow => ({ id: uid(), en: "", sk: "", example_en: "", example_sk: "", emoji: "" });
-const emptyG = (): GRow => ({ id: uid(), prompt: "", answer: "", options: "", translation_sk: "", explanation_sk: "" });
+const emptyV = (): VRow => ({ id: uid(), en: "", sk: "", example_en: "", example_sk: "", emoji: "", source_id: null });
+const emptyG = (): GRow => ({ id: uid(), prompt: "", answer: "", options: "", translation_sk: "", explanation_sk: "", source_id: null });
+const withIds = (s: Sentence[]): SRow[] => s.map((x) => ({ id: x.id ?? uid(), en: x.en ?? "", sk: x.sk ?? "" }));
+const emptyMeta: Meta = { title: "", textbook: "", unit: "", grade: "", notes: "" };
+const noDeleted: Deleted = { vocab: [], grammar: [], texts: [] };
+
+const USES: { value: TextUse; label: string }[] = [
+  { value: "reading", label: "Čítanie" },
+  { value: "listening", label: "Počúvanie" },
+  { value: "writing", label: "Písanie viet" },
+];
 
 function parseList(text: string): VRow[] {
   return text
@@ -38,37 +55,105 @@ function splitSentences(text: string) {
     .filter(Boolean);
 }
 
+const sortSources = (s: LessonSource[]) => [...s].sort((a, b) => a.page - b.page || a.position - b.position);
+
+async function pool<T>(items: T[], size: number, fn: (item: T) => Promise<void>) {
+  const queue = [...items];
+  await Promise.all(
+    Array.from({ length: Math.min(size, queue.length) }, async () => {
+      while (queue.length) await fn(queue.shift()!);
+    }),
+  );
+}
+
+function madeSummary(v: number, g: number, t: number, w: number) {
+  return [
+    v && `${v} ${pl(v, "slovíčko", "slovíčka", "slovíčok")}`,
+    g && `${g} gramatika`,
+    t && `${t} ${pl(t, "text", "texty", "textov")}`,
+    w && `${w} ${pl(w, "veta", "vety", "viet")}`,
+  ]
+    .filter(Boolean)
+    .join(", ");
+}
+
 export default function LessonEditor() {
-  const id = useSearchParams().get("id");
+  const urlId = useSearchParams().get("id");
   const router = useRouter();
-  const [loading, setLoading] = useState(!!id);
-  const [meta, setMeta] = useState({ title: "", textbook: "", unit: "", grade: "" as string, notes: "" });
+  const [lessonId, setLessonIdState] = useState<string | null>(null);
+  const idRef = useRef<string | null>(null);
+  const loadedFor = useRef<string | null | undefined>(undefined);
+  const autoTitle = useRef(false);
+  const [loading, setLoading] = useState(!!urlId);
+  const [meta, setMeta] = useState<Meta>(emptyMeta);
   const [vocab, setVocab] = useState<VRow[]>([]);
   const [grammar, setGrammar] = useState<GRow[]>([]);
   const [texts, setTexts] = useState<TRow[]>([]);
-  const [deleted, setDeleted] = useState({ vocab: [] as string[], grammar: [] as string[], texts: [] as string[] });
-  const [tab, setTab] = useState<"vocab" | "grammar" | "texts">("vocab");
+  const [sources, setSources] = useState<LessonSource[]>([]);
+  const [deleted, setDeleted] = useState<Deleted>(noDeleted);
+  const [tab, setTab] = useState<Tab>("sources");
   const [ai, setAi] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+  const [buildErrors, setBuildErrors] = useState<Record<string, string>>({});
   const [saved, setSaved] = useState(false);
   const [paste, setPaste] = useState<string | null>(null);
   const [topic, setTopic] = useState("");
   const [textPaste, setTextPaste] = useState("");
-  const fileRef = useRef<HTMLInputElement>(null);
+
+  const setLessonId = (id: string | null) => {
+    idRef.current = id;
+    loadedFor.current = id;
+    setLessonIdState(id);
+  };
 
   useEffect(() => {
     aiStatus().then(setAi);
-    if (!id) {
+  }, []);
+
+  // Load the lesson from the URL. Our own URL update after creating a lesson is skipped.
+  useEffect(() => {
+    if (loadedFor.current === urlId) return;
+    loadedFor.current = urlId;
+    idRef.current = urlId;
+    setLessonIdState(urlId);
+    setDeleted(noDeleted);
+    setBuildErrors({});
+    setNote(null);
+    setError(null);
+    if (!urlId) {
+      setMeta(emptyMeta);
       setVocab([emptyV(), emptyV(), emptyV()]);
+      setGrammar([]);
+      setTexts([]);
+      setSources([]);
+      setTab("sources");
+      setLoading(false);
       return;
     }
+    setLoading(true);
     (async () => {
-      const { data } = await supabase().from("lessons").select("*").eq("id", id).maybeSingle();
+      const sb = supabase();
+      const [{ data }, c, src] = await Promise.all([
+        sb.from("lessons").select("*").eq("id", urlId).maybeSingle(),
+        loadContent([urlId]),
+        sb.from("lesson_sources").select("*").eq("lesson_id", urlId).order("page").order("position"),
+      ]);
+      if (loadedFor.current !== urlId) return;
       const l = data as Lesson | null;
       if (l) setMeta({ title: l.title, textbook: l.textbook ?? "", unit: l.unit ?? "", grade: l.grade ? String(l.grade) : "", notes: l.notes ?? "" });
-      const c = await loadContent([id]);
-      setVocab(c.vocab.map((v) => ({ id: v.id, en: v.en, sk: v.sk, example_en: v.example_en ?? "", example_sk: v.example_sk ?? "", emoji: v.emoji ?? "" })));
+      setVocab(
+        c.vocab.map((v) => ({
+          id: v.id,
+          en: v.en,
+          sk: v.sk,
+          example_en: v.example_en ?? "",
+          example_sk: v.example_sk ?? "",
+          emoji: v.emoji ?? "",
+          source_id: v.source_id ?? null,
+        })),
+      );
       setGrammar(
         c.grammar.map((g) => ({
           id: g.id,
@@ -77,15 +162,30 @@ export default function LessonEditor() {
           options: (g.options ?? []).join(", "),
           translation_sk: g.translation_sk ?? "",
           explanation_sk: g.explanation_sk ?? "",
+          source_id: g.source_id ?? null,
         })),
       );
-      setTexts(c.texts.map((t) => ({ id: t.id, title: t.title ?? "", sentences: t.sentences ?? [] })));
+      setTexts(
+        c.texts.map((t) => ({
+          id: t.id,
+          title: t.title ?? "",
+          sentences: withIds(t.sentences ?? []),
+          uses: t.uses?.length ? t.uses : ["reading", "listening"],
+          source_id: t.source_id ?? null,
+        })),
+      );
+      const rows = (src.data ?? []) as LessonSource[];
+      setSources(rows);
+      setTab(rows.length ? "sources" : "vocab");
       setLoading(false);
     })();
-  }, [id]);
+  }, [urlId]);
 
-  const dirty = () => setSaved(false);
-  const setM = (patch: Partial<typeof meta>) => {
+  const dirty = () => {
+    setSaved(false);
+    setNote(null);
+  };
+  const setM = (patch: Partial<Meta>) => {
     dirty();
     setMeta((m) => ({ ...m, ...patch }));
   };
@@ -125,29 +225,261 @@ export default function LessonEditor() {
     }
   }
 
-  async function onPhotos(files: FileList | null) {
-    if (!files?.length) return;
-    await run("Čítam fotku…", async () => {
-      for (const f of Array.from(files)) {
-        const r = await importFromPhoto(f, { grade: meta.grade ? Number(meta.grade) : null, hint: meta.title });
-        setMeta((m) => ({ ...m, title: m.title || r.title || "", unit: m.unit || r.unit || "" }));
-        const nv = r.vocab.map((v) => ({ ...emptyV(), ...v, example_en: v.example_en ?? "", example_sk: v.example_sk ?? "", emoji: v.emoji ?? "" }));
-        setVocab((rows) => [...rows.filter((x) => x.en || x.sk), ...nv]);
-        setGrammar((rows) => [
-          ...rows,
-          ...r.grammar.map((g) => ({
-            ...emptyG(),
-            prompt: g.prompt,
-            answer: g.answer,
-            options: (g.options ?? []).join(", "),
-            translation_sk: g.translation_sk ?? "",
-            explanation_sk: g.explanation_sk ?? "",
-          })),
-        ]);
-        setTexts((rows) => [...rows, ...r.texts.map((t) => ({ id: uid(), title: t.title ?? "", sentences: t.sentences }))]);
+  const grade = meta.grade ? Number(meta.grade) : null;
+
+  /** Writes the lesson and all its items; returns the lesson id. */
+  async function persist(snap: Snapshot): Promise<string> {
+    const sb = supabase();
+    const isNew = !idRef.current;
+    const id = idRef.current ?? uid();
+    const lr = await sb.from("lessons").upsert({
+      id,
+      title: snap.meta.title.trim(),
+      textbook: snap.meta.textbook.trim() || null,
+      unit: snap.meta.unit.trim() || null,
+      grade: snap.meta.grade ? Number(snap.meta.grade) : null,
+      notes: snap.meta.notes.trim() || null,
+    });
+    if (lr.error) throw lr.error;
+    if (isNew) {
+      setLessonId(id);
+      router.replace(`/rodic/lekcia?id=${id}`);
+    }
+    const ops = [];
+    const d = snap.deleted;
+    if (d.vocab.length) ops.push(sb.from("vocab_items").delete().in("id", d.vocab));
+    if (d.grammar.length) ops.push(sb.from("grammar_items").delete().in("id", d.grammar));
+    if (d.texts.length) ops.push(sb.from("lesson_texts").delete().in("id", d.texts));
+    const v = snap.vocab
+      .filter((r) => r.en.trim() && r.sk.trim())
+      .map((r, i) => ({
+        id: r.id,
+        lesson_id: id,
+        en: r.en.trim(),
+        sk: r.sk.trim(),
+        example_en: r.example_en.trim() || null,
+        example_sk: r.example_sk.trim() || null,
+        emoji: r.emoji.trim() || null,
+        position: i,
+        source_id: r.source_id,
+      }));
+    const g = snap.grammar
+      .filter((r) => r.prompt.trim() && r.answer.trim())
+      .map((r, i) => {
+        const opts = r.options
+          .split(/[,;]/)
+          .map((o) => o.trim())
+          .filter(Boolean);
+        const answer = r.answer.trim();
+        const first = answer.split("|")[0].trim();
+        if (opts.length && !opts.some((o) => o.toLowerCase() === first.toLowerCase())) opts.push(first);
+        return {
+          id: r.id,
+          lesson_id: id,
+          prompt: r.prompt.trim(),
+          answer,
+          options: opts,
+          translation_sk: r.translation_sk.trim() || null,
+          explanation_sk: r.explanation_sk.trim() || null,
+          position: i,
+          source_id: r.source_id,
+        };
+      });
+    const t = snap.texts
+      .map((r, i) => ({
+        id: r.id,
+        lesson_id: id,
+        title: r.title.trim() || null,
+        sentences: r.sentences.filter((s) => s.en.trim()).map((s) => ({ id: s.id, en: s.en.trim(), sk: s.sk.trim() })),
+        uses: r.uses,
+        position: i,
+        source_id: r.source_id,
+      }))
+      .filter((r) => r.sentences.length);
+    // texts that ended up empty must not linger in the database
+    const emptyTexts = snap.texts.filter((r) => !r.sentences.some((s) => s.en.trim())).map((r) => r.id);
+    if (emptyTexts.length) ops.push(sb.from("lesson_texts").delete().in("id", emptyTexts));
+    if (v.length) ops.push(sb.from("vocab_items").upsert(v));
+    if (g.length) ops.push(sb.from("grammar_items").upsert(g));
+    if (t.length) ops.push(sb.from("lesson_texts").upsert(t));
+    const results = await Promise.all(ops);
+    const failed = results.find((r) => r.error);
+    if (failed?.error) throw failed.error;
+    setDeleted(noDeleted);
+    setSaved(true);
+    return id;
+  }
+
+  async function save() {
+    if (!meta.title.trim()) {
+      setError("Zadaj názov lekcie.");
+      return;
+    }
+    setBusy("Ukladám…");
+    setError(null);
+    try {
+      await persist({ meta, vocab, grammar, texts, deleted });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Uloženie zlyhalo.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  /** Photos need a saved lesson to attach their exercises to. */
+  async function ensureLesson(): Promise<string> {
+    if (idRef.current) return idRef.current;
+    let m = meta;
+    if (!m.title.trim()) {
+      autoTitle.current = true;
+      m = { ...m, title: `Nová lekcia ${new Date().toLocaleDateString("sk-SK")}` };
+      setMeta(m);
+    }
+    return persist({ meta: m, vocab, grammar, texts, deleted });
+  }
+
+  async function onPage(page: number, r: PageResult, id: string) {
+    const sb = supabase();
+    if (autoTitle.current && r.title) {
+      autoTitle.current = false;
+      const title = r.title;
+      setMeta((m) => ({ ...m, title, unit: m.unit || r.unit }));
+      await sb
+        .from("lessons")
+        .update({ title, ...(r.unit ? { unit: r.unit } : {}) })
+        .eq("id", id);
+    }
+    if (!r.exercises.length) return;
+    const rows = r.exercises.map((e, i) => ({
+      lesson_id: id,
+      page,
+      label: e.label || null,
+      instruction: e.instruction || null,
+      content: e.text || e.instruction,
+      note: e.note || null,
+      types: e.suggested,
+      suggested: e.suggested,
+      position: i,
+    }));
+    const { data, error } = await sb.from("lesson_sources").insert(rows).select("*");
+    if (error) throw error;
+    setSources((prev) => sortSources([...prev, ...((data ?? []) as LessonSource[])]));
+  }
+
+  const importer = usePageImport({ ensureLesson, grade, lastPage: () => Math.max(0, ...sources.map((s) => s.page)), onPage });
+
+  function setSourceTypes(id: string, types: SourceType[]) {
+    setNote(null);
+    setSources((prev) => prev.map((s) => (s.id === id ? { ...s, types } : s)));
+    supabase()
+      .from("lesson_sources")
+      .update({ types })
+      .eq("id", id)
+      .then(({ error }) => error && setError(`Typ sa neuložil: ${error.message}`));
+  }
+
+  /** Generate practice items for every exercise whose types changed, replace its old items and save. */
+  async function createFromSources() {
+    const targets = sources.filter(isPending);
+    if (!targets.length) return;
+    setError(null);
+    setNote(null);
+    setBuildErrors({});
+    let done = 0;
+    setBusy(`Tvorím cvičenia 0 / ${targets.length}…`);
+    const results = new Map<string, { types: SourceType[]; data: BuildResult | null }>();
+    const errs: Record<string, string> = {};
+    await pool(targets, 3, async (src) => {
+      try {
+        const eff = effective(src.types);
+        const data = eff.length ? await buildFromSource({ label: src.label, instruction: src.instruction, content: src.content, types: eff }, grade) : null;
+        results.set(src.id, { types: src.types, data });
+      } catch (e) {
+        errs[src.id] = e instanceof Error ? e.message : "Neznáma chyba";
+      } finally {
+        done++;
+        setBusy(`Tvorím cvičenia ${done} / ${targets.length}…`);
       }
     });
-    if (fileRef.current) fileRef.current.value = "";
+    setBuildErrors(errs);
+    if (!results.size) {
+      setBusy(null);
+      setError("Cvičenia sa nepodarilo vytvoriť. Skús to znova.");
+      return;
+    }
+
+    // replace the previous items of these exercises with the new ones
+    const ids = new Set(results.keys());
+    const old = (r: { source_id: string | null }) => !!r.source_id && ids.has(r.source_id);
+    const nextDeleted: Deleted = {
+      vocab: [...deleted.vocab, ...vocab.filter(old).map((r) => r.id)],
+      grammar: [...deleted.grammar, ...grammar.filter(old).map((r) => r.id)],
+      texts: [...deleted.texts, ...texts.filter(old).map((r) => r.id)],
+    };
+    const nv = vocab.filter((r) => !old(r) && (r.en.trim() || r.sk.trim()));
+    const ng = grammar.filter((r) => !old(r));
+    const nt = texts.filter((r) => !old(r));
+    const known = new Set(nv.map((r) => normalize(r.en)));
+    const added = { v: 0, g: 0, t: 0, w: 0 };
+    for (const src of targets) {
+      const res = results.get(src.id)?.data;
+      if (!res) continue;
+      const name = src.label ? `Cvičenie ${src.label}` : "Cvičenie";
+      for (const v of res.vocab) {
+        const key = normalize(v.en);
+        if (known.has(key)) continue;
+        known.add(key);
+        nv.push({ ...emptyV(), en: v.en, sk: v.sk, example_en: v.example_en ?? "", example_sk: v.example_sk ?? "", emoji: v.emoji ?? "", source_id: src.id });
+        added.v++;
+      }
+      for (const g of res.grammar) {
+        ng.push({
+          ...emptyG(),
+          prompt: g.prompt,
+          answer: g.answer,
+          options: (g.options ?? []).join(", "),
+          translation_sk: g.translation_sk ?? "",
+          explanation_sk: g.explanation_sk ?? "",
+          source_id: src.id,
+        });
+        added.g++;
+      }
+      const uses = (["reading", "listening"] as const).filter((u) => src.types.includes(u));
+      if (res.text?.sentences.length && uses.length) {
+        nt.push({ id: uid(), title: res.text.title || name, sentences: withIds(res.text.sentences), uses: [...uses], source_id: src.id });
+        added.t++;
+      }
+      if (res.writing.length) {
+        nt.push({ id: uid(), title: `${name}: vety na písanie`, sentences: withIds(res.writing), uses: ["writing"], source_id: src.id });
+        added.w += res.writing.length;
+      }
+    }
+    setVocab(nv);
+    setGrammar(ng);
+    setTexts(nt);
+    setDeleted(nextDeleted);
+
+    try {
+      setBusy("Ukladám…");
+      await persist({ meta, vocab: nv, grammar: ng, texts: nt, deleted: nextDeleted });
+      const now = new Date().toISOString();
+      const sb = supabase();
+      const marks = await Promise.all(
+        [...results.entries()].map(([id, r]) => sb.from("lesson_sources").update({ applied_types: r.types, applied_at: now }).eq("id", id)),
+      );
+      const failed = marks.find((m) => m.error);
+      if (failed?.error) throw failed.error;
+      setSources((prev) => prev.map((s) => (results.has(s.id) ? { ...s, applied_types: results.get(s.id)!.types, applied_at: now } : s)));
+      const made = madeSummary(added.v, added.g, added.t, added.w);
+      const fails = Object.keys(errs).length;
+      setNote(
+        `${made ? `Pridané: ${made}.` : "Hotovo."} Lekcia je uložená.${fails ? ` ${fails} ${pl(fails, "cvičenie sa nepodarilo", "cvičenia sa nepodarilo", "cvičení sa nepodarilo")} vytvoriť, skús znova.` : ""}`,
+      );
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Uloženie zlyhalo.");
+    } finally {
+      setBusy(null);
+    }
   }
 
   async function enrich() {
@@ -156,7 +488,7 @@ export default function LessonEditor() {
     await run("Dopĺňam vety a obrázky…", async () => {
       const r = await enrichVocab(
         targets.map(({ en, sk, example_en, example_sk, emoji }) => ({ en, sk, example_en, example_sk, emoji })),
-        meta.grade ? Number(meta.grade) : null,
+        grade,
       );
       setVocab((rows) =>
         rows.map((row) => {
@@ -176,7 +508,7 @@ export default function LessonEditor() {
   async function genGrammar() {
     if (!topic.trim()) return;
     await run("Tvorím gramatické cvičenia…", async () => {
-      const r = await generateGrammar(topic, vocab.map((v) => v.en).filter(Boolean), 8, meta.grade ? Number(meta.grade) : null);
+      const r = await generateGrammar(topic, vocab.map((v) => v.en).filter(Boolean), 8, grade);
       setGrammar((rows) => [
         ...rows,
         ...r.items.map((g) => ({
@@ -194,101 +526,37 @@ export default function LessonEditor() {
   async function addText() {
     const sentences = splitSentences(textPaste);
     if (!sentences.length) return;
-    const row: TRow = { id: uid(), title: "", sentences: sentences.map((en) => ({ en, sk: "" })) };
+    const row: TRow = { id: uid(), title: "", sentences: sentences.map((en) => ({ id: uid(), en, sk: "" })), uses: ["reading", "listening"], source_id: null };
     setTexts((t) => [...t, row]);
     setTextPaste("");
     dirty();
     if (ai) {
       await run("Prekladám text…", async () => {
         const r = await translateSentences(sentences);
-        setTexts((t) => t.map((x) => (x.id === row.id ? { ...x, sentences: r.sentences } : x)));
+        setTexts((t) => t.map((x) => (x.id === row.id ? { ...x, sentences: x.sentences.map((s, i) => ({ ...s, sk: r.sentences[i]?.sk ?? s.sk })) } : x)));
       });
-    }
-  }
-
-  async function save() {
-    if (!meta.title.trim()) {
-      setError("Zadaj názov lekcie.");
-      return;
-    }
-    setBusy("Ukladám…");
-    setError(null);
-    try {
-      const sb = supabase();
-      const lessonId = id ?? uid();
-      const lr = await sb.from("lessons").upsert({
-        id: lessonId,
-        title: meta.title.trim(),
-        textbook: meta.textbook.trim() || null,
-        unit: meta.unit.trim() || null,
-        grade: meta.grade ? Number(meta.grade) : null,
-        notes: meta.notes.trim() || null,
-      });
-      if (lr.error) throw lr.error;
-      const ops = [];
-      if (deleted.vocab.length) ops.push(sb.from("vocab_items").delete().in("id", deleted.vocab));
-      if (deleted.grammar.length) ops.push(sb.from("grammar_items").delete().in("id", deleted.grammar));
-      if (deleted.texts.length) ops.push(sb.from("lesson_texts").delete().in("id", deleted.texts));
-      const v = vocab
-        .filter((r) => r.en.trim() && r.sk.trim())
-        .map((r, i) => ({
-          id: r.id,
-          lesson_id: lessonId,
-          en: r.en.trim(),
-          sk: r.sk.trim(),
-          example_en: r.example_en.trim() || null,
-          example_sk: r.example_sk.trim() || null,
-          emoji: r.emoji.trim() || null,
-          position: i,
-        }));
-      const g = grammar
-        .filter((r) => r.prompt.trim() && r.answer.trim())
-        .map((r, i) => {
-          const opts = r.options
-            .split(/[,;]/)
-            .map((o) => o.trim())
-            .filter(Boolean);
-          const answer = r.answer.trim();
-          const first = answer.split("|")[0].trim();
-          if (opts.length && !opts.some((o) => o.toLowerCase() === first.toLowerCase())) opts.push(first);
-          return {
-            id: r.id,
-            lesson_id: lessonId,
-            prompt: r.prompt.trim(),
-            answer,
-            options: opts,
-            translation_sk: r.translation_sk.trim() || null,
-            explanation_sk: r.explanation_sk.trim() || null,
-            position: i,
-          };
-        });
-      const t = texts
-        .map((r, i) => ({ id: r.id, lesson_id: lessonId, title: r.title.trim() || null, sentences: r.sentences.filter((s) => s.en.trim()), position: i }))
-        .filter((r) => r.sentences.length);
-      if (v.length) ops.push(sb.from("vocab_items").upsert(v));
-      if (g.length) ops.push(sb.from("grammar_items").upsert(g));
-      if (t.length) ops.push(sb.from("lesson_texts").upsert(t));
-      const results = await Promise.all(ops);
-      const failed = results.find((r) => r.error);
-      if (failed?.error) throw failed.error;
-      setDeleted({ vocab: [], grammar: [], texts: [] });
-      setSaved(true);
-      if (!id) router.replace(`/rodic/lekcia?id=${lessonId}`);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Uloženie zlyhalo.");
-    } finally {
-      setBusy(null);
     }
   }
 
   async function removeLesson() {
-    if (!id || !confirm("Zmazať celú lekciu? Pokrok detí pri jej slovíčkach sa tiež stratí.")) return;
-    await supabase().from("lessons").delete().eq("id", id);
+    if (!lessonId || !confirm("Zmazať celú lekciu? Pokrok detí pri jej slovíčkach sa tiež stratí.")) return;
+    await supabase().from("lessons").delete().eq("id", lessonId);
     router.push("/rodic/lekcie");
   }
 
   if (loading) return <Spinner />;
   const missingExtras = vocab.filter((v) => v.en && v.sk && (!v.example_en || !v.emoji)).length;
+  const pending = sources.filter(isPending).length;
+  const pages = [...new Set(sources.map((s) => s.page))];
+  const sourceLabel = new Map(sources.map((s) => [s.id, `${s.label ? `cvičenie ${s.label}` : "cvičenie"}, strana ${s.page}`]));
+  const madeFor = (id: string) =>
+    madeSummary(
+      vocab.filter((r) => r.source_id === id).length,
+      grammar.filter((r) => r.source_id === id).length,
+      texts.filter((r) => r.source_id === id && !r.uses.includes("writing")).length,
+      texts.filter((r) => r.source_id === id && r.uses.includes("writing")).reduce((n, r) => n + r.sentences.length, 0),
+    );
+  const working = !!busy || importer.active;
 
   return (
     <div className="max-w-4xl mx-auto space-y-5">
@@ -297,21 +565,7 @@ export default function LessonEditor() {
       </Link>
 
       <Card className="p-5 sm:p-6 space-y-4">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <h1 className="text-2xl font-black">{id ? "Upraviť lekciu" : "Nová lekcia"}</h1>
-          <div className="flex gap-2">
-            <input ref={fileRef} type="file" accept="image/*" multiple className="hidden" onChange={(e) => onPhotos(e.target.files)} />
-            <Button variant="sun" onClick={() => fileRef.current?.click()} disabled={!ai || !!busy} title={ai ? undefined : "AI nie je nastavené"}>
-              <Camera className="size-4" /> Import z fotky
-            </Button>
-          </div>
-        </div>
-        {!ai && (
-          <p className="text-sm text-slate">
-            Import z fotky a dopĺňanie viet cez AI sa zapne po nastavení kľúča <code className="font-mono text-xs">ANTHROPIC_API_KEY</code> vo Verceli. Formulár
-            funguje aj bez neho.
-          </p>
-        )}
+        <h1 className="text-2xl font-black">{lessonId ? "Upraviť lekciu" : "Nová lekcia"}</h1>
         <div className="grid sm:grid-cols-2 gap-4">
           <Field label="Názov lekcie">
             <Input value={meta.title} onChange={(e) => setM({ title: e.target.value })} placeholder="napr. Unit 3 – My family" />
@@ -337,18 +591,46 @@ export default function LessonEditor() {
         value={tab}
         onChange={setTab}
         options={[
+          { value: "sources", label: `Z učebnice (${sources.length})` },
           { value: "vocab", label: `Slovíčka (${vocab.filter((v) => v.en).length})` },
           { value: "grammar", label: `Gramatika (${grammar.length})` },
-          { value: "texts", label: `Čítanie a počúvanie (${texts.length})` },
+          { value: "texts", label: `Texty a vety (${texts.length})` },
         ]}
       />
 
       {busy && (
-        <div className="rounded-2xl bg-sky-soft text-sky font-bold px-4 py-3 flex items-center gap-2">
+        <div className="rounded-2xl bg-sky-soft text-sky font-bold px-4 py-3 flex items-center gap-2" role="status">
           <Sparkles className="size-4 animate-pulse" /> {busy}
         </div>
       )}
       {error && <ErrorNote>{error}</ErrorNote>}
+      {note && !busy && (
+        <div className="rounded-2xl bg-leaf-soft text-leaf font-bold px-4 py-3 flex items-start gap-2" role="status">
+          <Check className="size-5 shrink-0" /> {note}
+        </div>
+      )}
+
+      {tab === "sources" && (
+        <div className="space-y-6">
+          <UploadPanel hasSources={sources.length > 0} ai={ai} disabled={!!busy} importer={importer} />
+          {pages.map((p) => {
+            const list = sources.filter((s) => s.page === p);
+            return (
+              <section key={p} className="space-y-3" aria-label={`Strana ${p}`}>
+                <h2 className="text-lg font-black">
+                  Strana {p}{" "}
+                  <span className="text-sm font-bold text-slate">
+                    · {list.length} {pl(list.length, "cvičenie", "cvičenia", "cvičení")}
+                  </span>
+                </h2>
+                {list.map((s) => (
+                  <SourceCard key={s.id} src={s} made={madeFor(s.id)} error={buildErrors[s.id]} disabled={!!busy} onTypes={(t) => setSourceTypes(s.id, t)} />
+                ))}
+              </section>
+            );
+          })}
+        </div>
+      )}
 
       {tab === "vocab" && (
         <Card className="p-4 sm:p-5 space-y-3">
@@ -467,6 +749,7 @@ export default function LessonEditor() {
                   aria-label="Vysvetlenie"
                 />
               </div>
+              {r.source_id && sourceLabel.has(r.source_id) && <p className="text-xs text-mist font-semibold">Z učebnice: {sourceLabel.get(r.source_id)}</p>}
             </div>
           ))}
           <Button variant="ghost" onClick={() => setGrammar((g) => [...g, emptyG()])}>
@@ -477,7 +760,10 @@ export default function LessonEditor() {
 
       {tab === "texts" && (
         <Card className="p-4 sm:p-5 space-y-4">
-          <p className="text-sm text-slate">Text z učebnice na čítanie a počúvanie. Appka ho číta po vetách a ku každej povie preklad.</p>
+          <p className="text-sm text-slate">
+            Texty a vety z učebnice. Pri každom zvoľ, na čo sa použije: čítanie po vetách, počúvanie (appka prečíta vetu a preklad) alebo písanie viet (dieťa
+            skladá vetu zo slov).
+          </p>
           <div className="rounded-2xl bg-paper p-3 space-y-2">
             <Textarea rows={4} value={textPaste} onChange={(e) => setTextPaste(e.target.value)} placeholder="Vlož anglický text…" />
             <Button size="sm" onClick={addText} disabled={!textPaste.trim() || !!busy}>
@@ -505,8 +791,36 @@ export default function LessonEditor() {
                   <Trash2 className="size-5" />
                 </button>
               </div>
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="text-xs font-bold text-slate mr-1">Použiť na:</span>
+                {USES.map((u) => {
+                  const on = t.uses.includes(u.value);
+                  return (
+                    <button
+                      key={u.value}
+                      type="button"
+                      aria-pressed={on}
+                      onClick={() =>
+                        setT((x) =>
+                          x.map((r, j) => {
+                            if (j !== ti) return r;
+                            const uses = on ? r.uses.filter((v) => v !== u.value) : [...r.uses, u.value];
+                            return { ...r, uses: uses.length ? uses : r.uses };
+                          }),
+                        )
+                      }
+                      className={cx(
+                        "h-8 px-3 rounded-full border-2 text-sm font-bold transition-colors",
+                        on ? "bg-sky text-white border-sky" : "bg-card border-line text-ink-soft hover:border-mist",
+                      )}
+                    >
+                      {u.label}
+                    </button>
+                  );
+                })}
+              </div>
               {t.sentences.map((s, si) => (
-                <div key={si} className="grid sm:grid-cols-2 gap-2">
+                <div key={s.id} className="grid sm:grid-cols-2 gap-2">
                   {(["en", "sk"] as const).map((k) => (
                     <Input
                       key={k}
@@ -522,36 +836,47 @@ export default function LessonEditor() {
                   ))}
                 </div>
               ))}
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => setT((x) => x.map((r, j) => (j === ti ? { ...r, sentences: [...r.sentences, { en: "", sk: "" }] } : r)))}
-              >
-                <Plus className="size-4" /> Pridať vetu
-              </Button>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setT((x) => x.map((r, j) => (j === ti ? { ...r, sentences: [...r.sentences, { id: uid(), en: "", sk: "" }] } : r)))}
+                >
+                  <Plus className="size-4" /> Pridať vetu
+                </Button>
+                {t.source_id && sourceLabel.has(t.source_id) && (
+                  <span className="text-xs text-mist font-semibold">Z učebnice: {sourceLabel.get(t.source_id)}</span>
+                )}
+              </div>
             </div>
           ))}
         </Card>
       )}
 
-      <div className="flex gap-3 sticky bottom-20 md:bottom-4">
-        <Button
-          size="lg"
-          className={cx("flex-1 shadow-lg", saved && "!bg-leaf")}
-          onClick={save}
-          loading={busy === "Ukladám…"}
-          disabled={!!busy && busy !== "Ukladám…"}
-        >
-          {saved ? (
-            <>
-              <Check className="size-5" /> Uložené
-            </>
-          ) : (
-            "Uložiť lekciu"
-          )}
-        </Button>
-        {id && (
-          <Button size="lg" variant="danger" onClick={removeLesson} aria-label="Zmazať lekciu">
+      <div className="flex gap-3 sticky bottom-20 md:bottom-4 z-10">
+        {tab === "sources" && pending > 0 ? (
+          <Button size="lg" variant="sun" className="flex-1 shadow-lg" onClick={createFromSources} disabled={working}>
+            <Wand2 className="size-5" /> Vytvoriť cvičenia ({pending})
+          </Button>
+        ) : (
+          <Button
+            size="lg"
+            className={cx("flex-1 shadow-lg", saved && "!bg-leaf")}
+            onClick={save}
+            loading={busy === "Ukladám…"}
+            disabled={working && busy !== "Ukladám…"}
+          >
+            {saved ? (
+              <>
+                <Check className="size-5" /> Uložené
+              </>
+            ) : (
+              "Uložiť lekciu"
+            )}
+          </Button>
+        )}
+        {lessonId && (
+          <Button size="lg" variant="danger" onClick={removeLesson} aria-label="Zmazať lekciu" disabled={working}>
             <Trash2 className="size-5" />
           </Button>
         )}

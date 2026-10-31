@@ -3,6 +3,7 @@
 import { ArrowLeft, Check } from "lucide-react";
 import Link from "next/link";
 import { useMemo, useState } from "react";
+import type { WritingItem } from "@/components/session/activities/Writing";
 import { toDrill } from "@/components/session/engine";
 import Summary, { type SummaryData } from "@/components/session/Summary";
 import { Button, Card, cx } from "@/components/ui";
@@ -85,6 +86,7 @@ const TEXTS: LessonText[] = [
     lesson_id: L,
     title: "My family",
     position: 0,
+    uses: ["reading", "listening"],
     sentences: [
       { en: "Hello, I am Tom.", sk: "Ahoj, ja som Tom." },
       { en: "I have got a sister and a brother.", sk: "Mám sestru a brata." },
@@ -93,6 +95,12 @@ const TEXTS: LessonText[] = [
     ],
   },
 ];
+
+const WRITING: WritingItem[] = [
+  { id: "w1", en: "I have got a sister.", sk: "Mám sestru." },
+  { id: "w2", en: "My father is a teacher.", sk: "Môj otec je učiteľ." },
+  { id: "w3", en: "We have got a big dog.", sk: "Máme veľkého psa." },
+].map((w) => ({ ...w, key: w.id }));
 
 const ALL_ON = Object.fromEntries(Object.keys(DEFAULT_SETTINGS.methods).map((k) => [k, true])) as ChildSettings["methods"];
 
@@ -133,6 +141,7 @@ export default function Demo() {
       texts: TEXTS,
       listening: TEXTS[0].sentences,
       shadow: VOCAB.slice(0, 4).map((v) => ({ en: v.example_en!, sk: v.example_sk! })),
+      writing: WRITING,
       activities: acts.map((a) => a.key).filter((k) => picked.includes(k)),
       lessonTitles: ["Ukážka: My family"],
     });

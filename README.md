@@ -5,7 +5,8 @@ Rodinná appka na precvičovanie angličtiny pre deti základnej školy. Rodič 
 ## Čo vie
 
 - **Rodičovský účet, viac detí.** Profil dieťaťa: ročník, zdatnosť, dotazník silných a slabých stránok, výber metód. Rodičovská zóna je chránená PIN-om, mobil sa dá zamknúť na jedno dieťa.
-- **Lekcie:** slovíčka (EN, SK, príkladová veta s prekladom, obrázok), gramatické doplňovačky, texty na čítanie a počúvanie. Import z fotky a dopĺňanie viet cez Claude.
+- **Lekcie:** slovíčka (EN, SK, príkladová veta s prekladom, obrázok), gramatické doplňovačky, texty na čítanie, počúvanie a písanie viet.
+- **Import z učebnice:** nahráš jednu alebo viac fotiek strán. AI každú stranu rozdelí na jednotlivé cvičenia, ukáže ich prepis (len na čítanie) a navrhne typ. Typy meníš bublinkami (Slovíčka, Gramatika, Čítanie, Počúvanie, Písanie viet, Nepoužiť) a tlačidlom „Vytvoriť cvičenia“ z nich vzniknú položky lekcie. Zmena typu neskôr nahradí položky z daného cvičenia.
 - **Hodina:** dieťa vyberie lekcie, zaškrtne časti a ich poradie, potom spustí.
 - **Metódy:** predvolene klasické precvičovanie a kartičky. Voliteľne spájanie dvojíc, poskladaj slovo, diktát, blesková runda, opakuj po mne, rozcvička z minulých lekcií, premiešanie, obrázok k slovíčku, body a séria dní. Zapínajú sa v profile dieťaťa.
 - **Opakovanie chýb:** Leitnerove krabičky. Chyba vráti slovíčko na začiatok, v hodine sa vráti o pár otázok neskôr a v ďalších hodinách sa zaraďuje skôr.
@@ -20,6 +21,10 @@ Next.js 16 (PWA), Tailwind 4, Supabase (Auth, Postgres s RLS), Vercel. AI: Claud
 ## Premenné prostredia
 
 Pozri `.env.example`. Povinné sú len dve `NEXT_PUBLIC_SUPABASE_*`. AI a Azure sú voliteľné; bez nich appka funguje s formulárom a hlasom telefónu.
+
+## Databáza
+
+Migrácie sú v `supabase/migrations/`.
 
 ## Vývoj
 

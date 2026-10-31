@@ -3,7 +3,7 @@
 import { BookOpen, Plus } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { Button, Card, Spinner, buttonClass } from "@/components/ui";
+import { Card, Spinner, buttonClass } from "@/components/ui";
 import { listLessons, type LessonWithCounts } from "@/lib/data";
 
 export default function LessonsPage() {
