@@ -63,12 +63,17 @@ export async function translateSentences(sentences: string[]) {
   return post<{ sentences: Sentence[] }>("/api/ai/enrich", { mode: "translate", sentences });
 }
 
-export async function aiStatus(): Promise<boolean> {
+export type AiInfo = { ai: boolean; provider: "anthropic" | "openai" | null; model: string | null };
+
+/** Which AI service the server uses, if any. */
+export async function aiInfo(): Promise<AiInfo> {
   try {
     const res = await fetch("/api/ai/enrich", { headers: await authHeader() });
     const j = await res.json();
-    return !!j.ai;
+    return { ai: !!j.ai, provider: j.provider ?? null, model: j.model ?? null };
   } catch {
-    return false;
+    return { ai: false, provider: null, model: null };
   }
 }
+
+export const aiStatus = async () => (await aiInfo()).ai;
