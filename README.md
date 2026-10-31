@@ -19,11 +19,11 @@ Rodinná appka na precvičovanie angličtiny pre deti základnej školy. Rodič 
 
 ## Stack
 
-Next.js 16 (PWA), Tailwind 4, Supabase (Auth, Postgres s RLS), Vercel. AI: Claude API (import, vety, gramatika), Azure Speech (hlasy EN a SK).
+Next.js 16 (PWA), Tailwind 4, Supabase (Auth, Postgres s RLS), Vercel. AI: OpenAI alebo Claude API (import, vety, gramatika), Azure Speech (hlasy EN a SK).
 
 ## Premenné prostredia
 
-Pozri `.env.example`. Povinné sú len dve `NEXT_PUBLIC_SUPABASE_*`. AI a Azure sú voliteľné; bez nich appka funguje s formulárom a hlasom telefónu.
+Pozri `.env.example`. Povinné sú len dve `NEXT_PUBLIC_SUPABASE_*`. AI a Azure sú voliteľné; bez nich appka funguje s formulárom a hlasom telefónu. Pre AI stačí jeden kľúč: `OPENAI_API_KEY` (predvolený model `gpt-6-sol`, mení sa cez `OPENAI_MODEL`) alebo `ANTHROPIC_API_KEY`.
 
 ## Databáza
 

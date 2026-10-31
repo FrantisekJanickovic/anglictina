@@ -1,11 +1,11 @@
-import { aiConfigured, grammarSchema, gradeNote, sentenceSchema, structured, STYLE, vocabSchema } from "@/lib/claude";
+import { aiConfigured, aiStatus, NOT_CONFIGURED, grammarSchema, gradeNote, sentenceSchema, structured, STYLE, vocabSchema } from "@/lib/llm";
 import { requireUser, unauthorized } from "@/lib/server-auth";
 
 export const maxDuration = 90;
 
 export async function GET(req: Request) {
   void req.headers.get("authorization");
-  return Response.json({ ai: aiConfigured() });
+  return Response.json(aiStatus());
 }
 
 type Body =
@@ -14,7 +14,7 @@ type Body =
   | { mode: "translate"; sentences: string[] };
 
 export async function POST(req: Request) {
-  if (!aiConfigured()) return Response.json({ error: "AI nie je nastavené (chýba ANTHROPIC_API_KEY)." }, { status: 503 });
+  if (!aiConfigured()) return Response.json({ error: NOT_CONFIGURED }, { status: 503 });
   const user = await requireUser(req);
   if (!user) return unauthorized();
   const body = (await req.json().catch(() => null)) as Body | null;

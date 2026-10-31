@@ -6,7 +6,7 @@ import { useEffect, useState } from "react";
 import { useAuth } from "@/components/auth";
 import { Button, Card, ErrorNote, Field, Input } from "@/components/ui";
 import { getLockedChild, getPinHash, savePin, setLockedChild, setParentUnlocked } from "@/lib/device";
-import { aiStatus } from "@/lib/ai";
+import { aiInfo, type AiInfo } from "@/lib/ai";
 import { hasAzure } from "@/lib/speech";
 import { supabase } from "@/lib/supabase";
 import { TrainingSettings } from "./training";
@@ -19,12 +19,12 @@ export default function SettingsPage() {
   const [msg, setMsg] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [locked, setLocked] = useState<string | null>(null);
-  const [status, setStatus] = useState<{ ai: boolean; azure: boolean } | null>(null);
+  const [status, setStatus] = useState<{ ai: AiInfo; azure: boolean } | null>(null);
 
   useEffect(() => {
     getPinHash().then((h) => setHasPin(!!h));
     setLocked(getLockedChild());
-    Promise.all([aiStatus(), hasAzure()]).then(([ai, azure]) => setStatus({ ai, azure }));
+    Promise.all([aiInfo(), hasAzure()]).then(([ai, azure]) => setStatus({ ai, azure }));
   }, []);
 
   async function onSavePin(e: React.FormEvent) {
@@ -108,7 +108,10 @@ export default function SettingsPage() {
               {status.azure ? "Azure Speech (mužský a ženský hlas, EN aj SK)" : "vstavaný hlas telefónu. Pre kvalitnejšie hlasy nastav Azure Speech."}
             </li>
             <li>
-              <b>AI (import z fotky, vety, gramatika):</b> {status.ai ? "zapnuté" : "vypnuté, chýba kľúč ANTHROPIC_API_KEY"}
+              <b>AI (import z fotky, vety, gramatika):</b>{" "}
+              {status.ai.ai
+                ? `zapnuté (${status.ai.provider === "openai" ? "OpenAI" : "Claude"}, model ${status.ai.model})`
+                : "vypnuté, vo Verceli chýba kľúč OPENAI_API_KEY alebo ANTHROPIC_API_KEY"}
             </li>
           </ul>
         ) : (

@@ -1,4 +1,4 @@
-import { aiConfigured, arr, grammarSchema, gradeNote, s, sentenceSchema, structured, STYLE, vocabSchema } from "@/lib/claude";
+import { aiConfigured, NOT_CONFIGURED, arr, grammarSchema, gradeNote, s, sentenceSchema, structured, STYLE, vocabSchema } from "@/lib/llm";
 import { requireUser, unauthorized } from "@/lib/server-auth";
 import { cleanTypes, effective } from "@/lib/sources";
 
@@ -15,7 +15,7 @@ const RULES: Record<string, string> = {
 };
 
 export async function POST(req: Request) {
-  if (!aiConfigured()) return Response.json({ error: "AI nie je nastavené (chýba ANTHROPIC_API_KEY)." }, { status: 503 });
+  if (!aiConfigured()) return Response.json({ error: NOT_CONFIGURED }, { status: 503 });
   const user = await requireUser(req);
   if (!user) return unauthorized();
 

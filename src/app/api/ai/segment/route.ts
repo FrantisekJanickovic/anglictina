@@ -1,4 +1,4 @@
-import { aiConfigured, arr, gradeNote, s, structured } from "@/lib/claude";
+import { aiConfigured, NOT_CONFIGURED, arr, gradeNote, s, structured } from "@/lib/llm";
 import { requireUser, unauthorized } from "@/lib/server-auth";
 import { cleanTypes } from "@/lib/sources";
 
@@ -33,14 +33,13 @@ Leave out page headers, page numbers, footers and decorative text.
 If the page shows a unit or lesson heading, return it as title (and the unit number as unit).`;
 
 export async function POST(req: Request) {
-  if (!aiConfigured()) return Response.json({ error: "AI nie je nastavené (chýba ANTHROPIC_API_KEY)." }, { status: 503 });
+  if (!aiConfigured()) return Response.json({ error: NOT_CONFIGURED }, { status: 503 });
   const user = await requireUser(req);
   if (!user) return unauthorized();
 
   const body = (await req.json().catch(() => null)) as { image?: string; mediaType?: string; grade?: number | null } | null;
   if (!body?.image) return Response.json({ error: "Chýba obrázok." }, { status: 400 });
-  const mediaType = (["image/jpeg", "image/png", "image/webp", "image/gif"].includes(body.mediaType ?? "") ? body.mediaType : "image/jpeg") as
-    "image/jpeg" | "image/png" | "image/webp" | "image/gif";
+  const mediaType = ["image/jpeg", "image/png", "image/webp", "image/gif"].includes(body.mediaType ?? "") ? body.mediaType! : "image/jpeg";
 
   try {
     const raw = await structured<Raw>({
@@ -71,7 +70,7 @@ export async function POST(req: Request) {
         required: ["exercises"],
       },
       content: [
-        { type: "image", source: { type: "base64", media_type: mediaType, data: body.image } },
+        { type: "image", mediaType, data: body.image },
         { type: "text", text: "Split this textbook page into exercises." },
       ],
     });

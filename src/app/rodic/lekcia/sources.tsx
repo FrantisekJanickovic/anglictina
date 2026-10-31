@@ -135,8 +135,8 @@ export function UploadPanel({
       </div>
       {!ai && (
         <p className="text-sm text-slate rounded-xl bg-paper px-3 py-2">
-          Čítanie fotiek sa zapne po nastavení kľúča <code className="font-mono text-xs">ANTHROPIC_API_KEY</code> vo Verceli. Slovíčka, gramatiku aj texty môžeš
-          zatiaľ zadať ručne v ďalších záložkách.
+          Čítanie fotiek sa zapne po nastavení kľúča <code className="font-mono text-xs">OPENAI_API_KEY</code> alebo{" "}
+          <code className="font-mono text-xs">ANTHROPIC_API_KEY</code> vo Verceli. Slovíčka, gramatiku aj texty môžeš zatiaľ zadať ručne v ďalších záložkách.
         </p>
       )}
       {importer.queue.length > 0 && (
